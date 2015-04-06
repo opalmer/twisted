@@ -37,6 +37,9 @@ _lib = ffi.verify('''
 
 
 def create_anonymous_pipe():
+    # TODO: malloc/free may not be required (examples don't include it)
+    # TODO: getwinerror returning incorrect function atm (even though it
+    # returns fds)
     int_size = ffi.new("int *")
     p_reader = ffi.cast("int *", _lib.malloc(ffi.sizeof(int_size)))
     p_writer = ffi.cast("int *", _lib.malloc(ffi.sizeof(int_size)))
