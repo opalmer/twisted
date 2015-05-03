@@ -26,10 +26,12 @@ from functools import wraps
 
 # Twisted imports
 from twisted.python.compat import cmp, comparable
-from twisted.python import lockfile, log, failure
+from twisted.python import lockfile, failure
+from twisted.logger import Logger
 from twisted.python.deprecate import warnAboutFunction, deprecated
 from twisted.python.versions import Version
 
+log = Logger()
 
 
 class AlreadyCalledError(Exception):
@@ -52,7 +54,15 @@ class TimeoutError(Exception):
 
 
 def logError(err):
-    log.err(err)
+    """
+    Log and return failure.
+
+    This method can be used as an errback that passes the failure on to the
+    next errback unmodified. Note that if this is the last errback, and the
+    deferred gets garbage collected after being this errback has been called,
+    the clean up code logs it again.
+    """
+    log.failure(None, err)
     return err
 
 
@@ -287,7 +297,7 @@ class Deferred:
         @rtype: a L{Deferred}
         """
         assert callable(callback)
-        assert errback == None or callable(errback)
+        assert errback is None or callable(errback)
         cbs = ((callback, callbackArgs, callbackKeywords),
                (errback or (passthru), errbackArgs, errbackKeywords))
         self.callbacks.append(cbs)
@@ -664,11 +674,11 @@ class DebugInfo:
         info = ''
         if hasattr(self, "creator"):
             info += " C: Deferred was created:\n C:"
-            info += "".join(self.creator).rstrip().replace("\n","\n C:")
+            info += "".join(self.creator).rstrip().replace("\n", "\n C:")
             info += "\n"
         if hasattr(self, "invoker"):
             info += " I: First Invoker was:\n I:"
-            info += "".join(self.invoker).rstrip().replace("\n","\n I:")
+            info += "".join(self.invoker).rstrip().replace("\n", "\n I:")
             info += "\n"
         return info
 
@@ -681,11 +691,20 @@ class DebugInfo:
         state, print a traceback (if said errback is a L{Failure}).
         """
         if self.failResult is not None:
-            log.msg("Unhandled error in Deferred:", isError=True)
+            # Note: this is two separate messages for compatibility with
+            # earlier tests; arguably it should be a single error message.
+            log.critical("Unhandled error in Deferred:",
+                         isError=True)
+
             debugInfo = self._getDebugTracebacks()
-            if debugInfo != '':
-                log.msg("(debug: " + debugInfo + ")", isError=True)
-            log.err(self.failResult)
+            if debugInfo:
+                format = "(debug: {debugInfo})"
+            else:
+                format = None
+
+            log.failure(format,
+                        self.failResult,
+                        debugInfo=debugInfo)
 
 
 
@@ -862,8 +881,10 @@ class DeferredList(Deferred):
                 try:
                     deferred.cancel()
                 except:
-                    log.err(
-                        _why="Exception raised from user supplied canceller")
+                    log.failure(
+                        "Exception raised from user supplied canceller"
+                    )
+
 
 
 def _parseDListResult(l, fireOnOneErrback=False):

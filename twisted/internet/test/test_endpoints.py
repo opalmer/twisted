@@ -15,28 +15,27 @@ from socket import AF_INET, AF_INET6, SOCK_STREAM, IPPROTO_TCP
 from zope.interface import implementer
 from zope.interface.verify import verifyObject, verifyClass
 
-from twisted.python.compat import _PY3
 from twisted.trial import unittest
-from twisted.internet import (
-    error, interfaces, defer, endpoints, protocol, reactor, threads)
-from twisted.internet.address import (
-    IPv4Address, IPv6Address, UNIXAddress, _ProcessAddress, HostnameAddress)
-from twisted.internet.protocol import ClientFactory, Protocol
-from twisted.test.proto_helpers import RaisingMemoryReactor, StringTransport
-from twisted.python.failure import Failure
-from twisted.python.systemd import ListenFDs
-from twisted.python.filepath import FilePath
-from twisted.python import log
-
-from twisted.internet.task import Clock
-from twisted.test.proto_helpers import (MemoryReactorClock as MemoryReactor)
 from twisted.test import __file__ as testInitPath
-from twisted.internet.interfaces import IConsumer, IPushProducer
+from twisted.test.proto_helpers import MemoryReactorClock as MemoryReactor
+from twisted.test.proto_helpers import RaisingMemoryReactor, StringTransport
 from twisted.test.proto_helpers import StringTransportWithDisconnection
-from twisted.internet.interfaces import ITransport
-from twisted.internet.protocol import Factory
 
-pemPath = FilePath(testInitPath.encode("utf-8")).sibling(b"server.pem")
+from twisted.internet import error, interfaces, defer, endpoints, protocol
+from twisted.internet import reactor, threads
+from twisted.internet.address import IPv4Address, IPv6Address, UNIXAddress
+from twisted.internet.address import _ProcessAddress, HostnameAddress
+from twisted.internet.endpoints import StandardErrorBehavior
+from twisted.internet.interfaces import IConsumer, IPushProducer, ITransport
+from twisted.internet.protocol import ClientFactory, Protocol, Factory
+from twisted.internet.task import Clock
+from twisted.python import log
+from twisted.python.compat import _PY3
+from twisted.python.failure import Failure
+from twisted.python.filepath import FilePath
+from twisted.python.systemd import ListenFDs
+
+pemPath = FilePath(testInitPath).sibling("server.pem").asBytesMode()
 
 if not _PY3:
     from twisted.plugin import getPlugins
@@ -44,7 +43,6 @@ if not _PY3:
     from twisted.python.modules import getModule
     from twisted.internet import stdio
     from twisted.internet.stdio import PipeAddress
-    from twisted.internet.endpoints import StandardErrorBehavior
 
     casPath = getModule(__name__).filePath.sibling("fake_CAs")
     chainPath = casPath.child("chain.pem")
@@ -686,7 +684,7 @@ class FakeStdio(object):
 
 
 
-class StandardIOEndpointsTestCase(unittest.TestCase):
+class StandardIOEndpointsTests(unittest.TestCase):
     """
     Tests for Standard I/O Endpoints
     """
@@ -824,14 +822,14 @@ class MemoryProcessReactor(object):
 
 
 
-class ProcessEndpointsTestCase(unittest.TestCase):
+class ProcessEndpointsTests(unittest.TestCase):
     """
     Tests for child process endpoints.
     """
 
     def setUp(self):
         self.reactor = MemoryProcessReactor()
-        self.ep = endpoints.ProcessEndpoint(self.reactor, '/bin/executable')
+        self.ep = endpoints.ProcessEndpoint(self.reactor, b'/bin/executable')
         self.factory = protocol.Factory()
         self.factory.protocol = StubApplicationProtocol
 
@@ -841,7 +839,7 @@ class ProcessEndpointsTestCase(unittest.TestCase):
         Default values are set for the optional parameters in the endpoint.
         """
         self.assertIsInstance(self.ep._reactor, MemoryProcessReactor)
-        self.assertEqual(self.ep._executable, '/bin/executable')
+        self.assertEqual(self.ep._executable, b'/bin/executable')
         self.assertEqual(self.ep._args, ())
         self.assertEqual(self.ep._env, {})
         self.assertEqual(self.ep._path, None)
@@ -856,18 +854,18 @@ class ProcessEndpointsTestCase(unittest.TestCase):
         """
         The parameters passed to the endpoint are stored in it.
         """
-        environ = {'HOME': None}
+        environ = {b'HOME': None}
         ep = endpoints.ProcessEndpoint(
-            MemoryProcessReactor(), '/bin/executable',
-            ['/bin/executable'], {'HOME': environ['HOME']},
-            '/runProcessHere/', 1, 2, True, {3: 'w', 4: 'r', 5: 'r'},
+            MemoryProcessReactor(), b'/bin/executable',
+            [b'/bin/executable'], {b'HOME': environ[b'HOME']},
+            b'/runProcessHere/', 1, 2, True, {3: 'w', 4: 'r', 5: 'r'},
             StandardErrorBehavior.DROP)
 
         self.assertIsInstance(ep._reactor, MemoryProcessReactor)
-        self.assertEqual(ep._executable, '/bin/executable')
-        self.assertEqual(ep._args, ['/bin/executable'])
-        self.assertEqual(ep._env, {'HOME': environ['HOME']})
-        self.assertEqual(ep._path, '/runProcessHere/')
+        self.assertEqual(ep._executable, b'/bin/executable')
+        self.assertEqual(ep._args, [b'/bin/executable'])
+        self.assertEqual(ep._env, {b'HOME': environ[b'HOME']})
+        self.assertEqual(ep._path, b'/runProcessHere/')
         self.assertEqual(ep._uid, 1)
         self.assertEqual(ep._gid, 2)
         self.assertEqual(ep._usePTY, True)
@@ -891,13 +889,13 @@ class ProcessEndpointsTestCase(unittest.TestCase):
         The parameters for spawnProcess stored in the endpoint are passed when
         the endpoint's connect method is invoked.
         """
-        environ = {'HOME': None}
+        environ = {b'HOME': None}
 
         memoryReactor = MemoryProcessReactor()
         ep = endpoints.ProcessEndpoint(
-            memoryReactor, '/bin/executable',
-            ['/bin/executable'], {'HOME': environ['HOME']},
-            '/runProcessHere/', 1, 2, True, {3: 'w', 4: 'r', 5: 'r'})
+            memoryReactor, b'/bin/executable',
+            [b'/bin/executable'], {b'HOME': environ[b'HOME']},
+            b'/runProcessHere/', 1, 2, True, {3: 'w', 4: 'r', 5: 'r'})
         d = ep.connect(self.factory)
         self.successResultOf(d)
 
@@ -970,7 +968,7 @@ class ProcessEndpointTransportTests(unittest.TestCase):
     def setUp(self):
         self.reactor = MemoryProcessReactor()
         self.endpoint = endpoints.ProcessEndpoint(self.reactor,
-                                                  '/bin/executable')
+                                                  b'/bin/executable')
         protocol = self.successResultOf(
             self.endpoint.connect(Factory.forProtocol(Protocol))
         )
@@ -1074,8 +1072,8 @@ class ProcessEndpointTransportTests(unittest.TestCase):
         The writeSequence method of L{_ProcessEndpointTransport} writes a list
         of string passed to it to the transport's stdin.
         """
-        self.endpointTransport.writeSequence(['test1', 'test2', 'test3'])
-        self.assertEqual(self.process.io.getvalue(), 'test1test2test3')
+        self.endpointTransport.writeSequence([b'test1', b'test2', b'test3'])
+        self.assertEqual(self.process.io.getvalue(), b'test1test2test3')
 
 
     def test_write(self):
@@ -1083,8 +1081,8 @@ class ProcessEndpointTransportTests(unittest.TestCase):
         The write method of L{_ProcessEndpointTransport} writes a string of
         data passed to it to the child process's stdin.
         """
-        self.endpointTransport.write('test')
-        self.assertEqual(self.process.io.getvalue(), 'test')
+        self.endpointTransport.write(b'test')
+        self.assertEqual(self.process.io.getvalue(), b'test')
 
 
     def test_loseConnection(self):
@@ -1123,7 +1121,7 @@ class WrappedIProtocolTests(unittest.TestCase):
     """
     def setUp(self):
         self.reactor = MemoryProcessReactor()
-        self.ep = endpoints.ProcessEndpoint(self.reactor, '/bin/executable')
+        self.ep = endpoints.ProcessEndpoint(self.reactor, b'/bin/executable')
         self.eventLog = None
         self.factory = protocol.Factory()
         self.factory.protocol = StubApplicationProtocol
@@ -1169,14 +1167,13 @@ class WrappedIProtocolTests(unittest.TestCase):
         log.addObserver(self._stdLog)
         self.addCleanup(log.removeObserver, self._stdLog)
 
-        wpp.childDataReceived(2, 'stderr1')
+        wpp.childDataReceived(2, b'stderr1')
         self.assertEqual(self.eventLog['executable'], wpp.executable)
-        self.assertEqual(self.eventLog['data'], 'stderr1')
+        self.assertEqual(self.eventLog['data'], b'stderr1')
         self.assertEqual(self.eventLog['protocol'], wpp.protocol)
-        self.assertEqual(
-            self.eventLog['format'],
-            'Process %(executable)r wrote stderr unhandled '
-            'by %(protocol)s: %(data)s')
+        self.assertIn(
+            'wrote stderr unhandled by',
+            log.textFromEventDict(self.eventLog))
 
 
     def test_stderrSkip(self):
@@ -1191,7 +1188,7 @@ class WrappedIProtocolTests(unittest.TestCase):
         log.addObserver(self._stdLog)
         self.addCleanup(log.removeObserver, self._stdLog)
 
-        wpp.childDataReceived(2, 'stderr2')
+        wpp.childDataReceived(2, b'stderr2')
         self.assertEqual(self.eventLog, None)
 
 
@@ -1204,8 +1201,8 @@ class WrappedIProtocolTests(unittest.TestCase):
         self.successResultOf(d)
         wpp = self.reactor.processProtocol
 
-        wpp.childDataReceived(1, 'stdout')
-        self.assertEqual(wpp.protocol.data, 'stdout')
+        wpp.childDataReceived(1, b'stdout')
+        self.assertEqual(wpp.protocol.data, b'stdout')
 
 
     def test_processDone(self):
@@ -1238,7 +1235,7 @@ class WrappedIProtocolTests(unittest.TestCase):
 
 
 
-class TCP4EndpointsTestCase(EndpointTestCaseMixin, unittest.TestCase):
+class TCP4EndpointsTests(EndpointTestCaseMixin, unittest.TestCase):
     """
     Tests for TCP IPv4 Endpoints.
     """
@@ -1346,7 +1343,7 @@ class TCP4EndpointsTestCase(EndpointTestCaseMixin, unittest.TestCase):
 
 
 
-class TCP6EndpointsTestCase(EndpointTestCaseMixin, unittest.TestCase):
+class TCP6EndpointsTests(EndpointTestCaseMixin, unittest.TestCase):
     """
     Tests for TCP IPv6 Endpoints.
     """
@@ -1455,8 +1452,8 @@ class TCP6EndpointsTestCase(EndpointTestCaseMixin, unittest.TestCase):
 
 
 
-class TCP6EndpointNameResolutionTestCase(ClientEndpointTestCaseMixin,
-                                         unittest.TestCase):
+class TCP6EndpointNameResolutionTests(ClientEndpointTestCaseMixin,
+                                      unittest.TestCase):
     """
     Tests for a TCP IPv6 Client Endpoint pointed at a hostname instead
     of an IPv6 address literal.
@@ -1572,8 +1569,8 @@ class RaisingMemoryReactorWithClock(RaisingMemoryReactor, Clock):
 
 
 
-class HostnameEndpointsOneIPv4TestCase(ClientEndpointTestCaseMixin,
-                                unittest.TestCase):
+class HostnameEndpointsOneIPv4Tests(ClientEndpointTestCaseMixin,
+                                    unittest.TestCase):
     """
     Tests for the hostname based endpoints when GAI returns only one
     (IPv4) address.
@@ -1800,8 +1797,8 @@ class HostnameEndpointsOneIPv4TestCase(ClientEndpointTestCaseMixin,
 
 
 
-class HostnameEndpointsOneIPv6TestCase(ClientEndpointTestCaseMixin,
-                                unittest.TestCase):
+class HostnameEndpointsOneIPv6Tests(ClientEndpointTestCaseMixin,
+                                    unittest.TestCase):
     """
     Tests for the hostname based endpoints when GAI returns only one
     (IPv6) address.
@@ -1913,7 +1910,7 @@ class HostnameEndpointsOneIPv6TestCase(ClientEndpointTestCaseMixin,
 
 
 
-class HostnameEndpointsGAIFailureTestCase(unittest.TestCase):
+class HostnameEndpointsGAIFailureTests(unittest.TestCase):
     """
     Tests for the hostname based endpoints when GAI returns no address.
     """
@@ -1936,7 +1933,7 @@ class HostnameEndpointsGAIFailureTestCase(unittest.TestCase):
 
 
 
-class HostnameEndpointsFasterConnectionTestCase(unittest.TestCase):
+class HostnameEndpointsFasterConnectionTests(unittest.TestCase):
     """
     Tests for the hostname based endpoints when gai returns an IPv4 and
     an IPv6 address, and one connection takes less time than the other.
@@ -2081,8 +2078,8 @@ class HostnameEndpointsFasterConnectionTestCase(unittest.TestCase):
 
 
 
-class SSL4EndpointsTestCase(EndpointTestCaseMixin,
-                            unittest.TestCase):
+class SSL4EndpointsTests(EndpointTestCaseMixin,
+                         unittest.TestCase):
     """
     Tests for SSL Endpoints.
     """
@@ -2216,8 +2213,8 @@ class SSL4EndpointsTestCase(EndpointTestCaseMixin,
 
 
 
-class UNIXEndpointsTestCase(EndpointTestCaseMixin,
-                            unittest.TestCase):
+class UNIXEndpointsTests(EndpointTestCaseMixin,
+                         unittest.TestCase):
     """
     Tests for UnixSocket Endpoints.
     """
@@ -2325,7 +2322,7 @@ class UNIXEndpointsTestCase(EndpointTestCaseMixin,
 
 
 
-class ParserTestCase(unittest.TestCase):
+class ParserTests(unittest.TestCase):
     """
     Tests for L{endpoints._parseServer}, the low-level parsing logic.
     """
@@ -3004,8 +3001,8 @@ class SSLClientStringTests(unittest.TestCase):
 
 
 
-class AdoptedStreamServerEndpointTestCase(ServerEndpointTestCaseMixin,
-                                          unittest.TestCase):
+class AdoptedStreamServerEndpointTests(ServerEndpointTestCaseMixin,
+                                       unittest.TestCase):
     """
     Tests for adopted socket-based stream server endpoints.
     """
@@ -3347,10 +3344,8 @@ class ConnectProtocolTests(unittest.TestCase):
 
 
 if _PY3:
-    del (StandardIOEndpointsTestCase, UNIXEndpointsTestCase, ParserTestCase,
+    del (StandardIOEndpointsTests, UNIXEndpointsTests, ParserTests,
          ServerStringTests, ClientStringTests, SSLClientStringTests,
-         AdoptedStreamServerEndpointTestCase, SystemdEndpointPluginTests,
-         TCP6ServerEndpointPluginTests, StandardIOEndpointPluginTests,
-         ProcessEndpointsTestCase, WrappedIProtocolTests,
-         ProcessEndpointTransportTests,
-         )
+         AdoptedStreamServerEndpointTests, SystemdEndpointPluginTests,
+         TCP6ServerEndpointPluginTests, StandardIOEndpointPluginTests
+     )

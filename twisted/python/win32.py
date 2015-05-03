@@ -17,10 +17,13 @@ import re
 import os
 from functools import wraps
 
-from cffi import FFI
+try:
+    import win32api
+    import win32con
+except ImportError:
+    pass
 
 from twisted.python.runtime import platform
-from twisted.python.compat import winreg
 from twisted.python.util import sibpath
 
 API_HEADER = sibpath(__file__, "win32.h")
@@ -57,31 +60,18 @@ def getProgramsMenuPath():
     """
     if not platform.isWindows():
         return "C:\\Windows\\Start Menu\\Programs"
-
-    shell_folders = winreg.OpenKey(
-        winreg.HKEY_LOCAL_MACHINE,
-        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
-        0, winreg.KEY_READ
-    )
-    try:
-        value, _ = winreg.QueryValueEx(shell_folders, "Common Programs")
-        return value
-    finally:
-        shell_folders.Close()
+    keyname = 'SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders'
+    hShellFolders = win32api.RegOpenKeyEx(win32con.HKEY_LOCAL_MACHINE,
+                                          keyname, 0, win32con.KEY_READ)
+    return win32api.RegQueryValueEx(hShellFolders, 'Common Programs')[0]
 
 
 def getProgramFilesPath():
     """Get the path to the Program Files folder."""
-    current_value = winreg.OpenKey(
-        winreg.HKEY_LOCAL_MACHINE,
-        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion",
-        0, winreg.KEY_READ
-    )
-    try:
-        value, _ = winreg.QueryValueEx(current_value, "ProgramFilesDir")
-        return value
-    finally:
-        current_value.Close()
+    keyname = 'SOFTWARE\\Microsoft\\Windows\\CurrentVersion'
+    currentV = win32api.RegOpenKeyEx(win32con.HKEY_LOCAL_MACHINE,
+                                     keyname, 0, win32con.KEY_READ)
+    return win32api.RegQueryValueEx(currentV, 'ProgramFilesDir')[0]
 
 
 _cmdLineQuoteRe = re.compile(r'(\\*)"')

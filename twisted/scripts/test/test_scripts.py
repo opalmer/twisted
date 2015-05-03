@@ -13,6 +13,7 @@ from sys import executable
 from subprocess import PIPE, Popen
 
 from twisted.trial.unittest import SkipTest, TestCase
+from twisted.python import reflect
 from twisted.python.modules import getModule
 from twisted.python.filepath import FilePath
 from twisted.python.test.test_shellcomp import ZshScriptTestMixin
@@ -150,43 +151,8 @@ class ScriptTests(TestCase, ScriptTestsMixin):
         self.scriptTest("tap2deb")
 
 
-    def test_tapconvert(self):
-        self.scriptTest("tapconvert")
 
-
-    def test_deprecatedTkunzip(self):
-        """
-        The entire L{twisted.scripts.tkunzip} module, part of the old Windows
-        installer tool chain, is deprecated.
-        """
-        from twisted.scripts import tkunzip
-        warnings = self.flushWarnings(
-            offendingFunctions=[self.test_deprecatedTkunzip])
-        self.assertEqual(DeprecationWarning, warnings[0]['category'])
-        self.assertEqual(
-            "twisted.scripts.tkunzip was deprecated in Twisted 11.1.0: "
-            "Seek unzipping software outside of Twisted.",
-            warnings[0]['message'])
-        self.assertEqual(1, len(warnings))
-
-
-    def test_deprecatedTapconvert(self):
-        """
-        The entire L{twisted.scripts.tapconvert} module is deprecated.
-        """
-        from twisted.scripts import tapconvert
-        warnings = self.flushWarnings(
-            offendingFunctions=[self.test_deprecatedTapconvert])
-        self.assertEqual(DeprecationWarning, warnings[0]['category'])
-        self.assertEqual(
-            "twisted.scripts.tapconvert was deprecated in Twisted 12.1.0: "
-            "tapconvert has been deprecated.",
-            warnings[0]['message'])
-        self.assertEqual(1, len(warnings))
-
-
-
-class ZshIntegrationTestCase(TestCase, ZshScriptTestMixin):
+class ZshIntegrationTests(TestCase, ZshScriptTestMixin):
     """
     Test that zsh completion functions are generated without error
     """
@@ -195,7 +161,34 @@ class ZshIntegrationTestCase(TestCase, ZshScriptTestMixin):
                    ('pyhtmlizer', 'twisted.scripts.htmlizer.Options'),
                    ('tap2rpm', 'twisted.scripts.tap2rpm.MyOptions'),
                    ('tap2deb', 'twisted.scripts.tap2deb.MyOptions'),
-                   ('tapconvert', 'twisted.scripts.tapconvert.ConvertOptions'),
                    ('manhole', 'twisted.scripts.manhole.MyOptions')
                    ]
 
+
+
+class Tap2DeprecationTests(TestCase):
+    """
+    Contains tests to make sure tap2deb/tap2rpm are marked as deprecated.
+    """
+    def test_tap2debDeprecation(self):
+        """
+        L{twisted.scripts.tap2deb} is deprecated since Twisted 15.2.
+        """
+        reload(reflect.namedAny("twisted.scripts.tap2deb"))
+        warningsShown = self.flushWarnings()
+        self.assertEqual(1, len(warningsShown))
+        self.assertEqual(
+            "tap2deb is deprecated since Twisted 15.2.",
+            warningsShown[0]['message'])
+
+
+    def test_tap2rpmDeprecation(self):
+        """
+        L{twisted.scripts.tap2rpm} is deprecated since Twisted 15.2.
+        """
+        reload(reflect.namedAny("twisted.scripts.tap2rpm"))
+        warningsShown = self.flushWarnings()
+        self.assertEqual(1, len(warningsShown))
+        self.assertEqual(
+            "tap2rpm is deprecated since Twisted 15.2.",
+            warningsShown[0]['message'])

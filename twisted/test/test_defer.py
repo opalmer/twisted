@@ -70,7 +70,53 @@ class ImmediateFailureMixin(object):
 
 
 
-class DeferredTestCase(unittest.SynchronousTestCase, ImmediateFailureMixin):
+class UtilTests(unittest.TestCase):
+    """
+    Tests for utility functions.
+    """
+
+    def test_logErrorReturnsError(self):
+        """
+        L{defer.logError} returns the given error.
+        """
+        error = failure.Failure(RuntimeError())
+        result = defer.logError(error)
+        self.flushLoggedErrors(RuntimeError)
+
+        self.assertIs(error, result)
+
+
+    def test_logErrorLogsError(self):
+        """
+        L{defer.logError} logs the given error.
+        """
+        error = failure.Failure(RuntimeError())
+        defer.logError(error)
+        errors = self.flushLoggedErrors(RuntimeError)
+
+        self.assertEquals(errors, [error])
+
+
+    def test_logErrorLogsErrorNoRepr(self):
+        """
+        The text logged by L{defer.logError} has no repr of the failure.
+        """
+        output = []
+
+        def emit(eventDict):
+            output.append(log.textFromEventDict(eventDict))
+
+        log.addObserver(emit)
+
+        error = failure.Failure(RuntimeError())
+        defer.logError(error)
+        self.flushLoggedErrors(RuntimeError)
+
+        self.assertTrue(output[0].startswith("Unhandled Error\nTraceback "))
+
+
+
+class DeferredTests(unittest.SynchronousTestCase, ImmediateFailureMixin):
 
     def setUp(self):
         self.callbackResults = None
@@ -1444,7 +1490,7 @@ class FirstErrorTests(unittest.SynchronousTestCase):
 
 
 
-class AlreadyCalledTestCase(unittest.SynchronousTestCase):
+class AlreadyCalledTests(unittest.SynchronousTestCase):
     def setUp(self):
         self._deferredWasDebugging = defer.getDebugging()
         defer.setDebugging(True)
@@ -1587,7 +1633,7 @@ class AlreadyCalledTestCase(unittest.SynchronousTestCase):
 
 
 
-class DeferredCancellerTest(unittest.SynchronousTestCase):
+class DeferredCancellerTests(unittest.SynchronousTestCase):
     def setUp(self):
         self.callbackResults = None
         self.errbackResults = None
@@ -1850,7 +1896,7 @@ class DeferredCancellerTest(unittest.SynchronousTestCase):
 
 
 
-class LogTestCase(unittest.SynchronousTestCase):
+class LogTests(unittest.SynchronousTestCase):
     """
     Test logging of unhandled errors.
     """
@@ -1920,6 +1966,48 @@ class LogTestCase(unittest.SynchronousTestCase):
         self._check()
 
 
+    def test_errorLogNoRepr(self):
+        """
+        Verify that when a L{Deferred} with no references to it is fired,
+        the logged message does not contain a repr of the failure object.
+        """
+        defer.Deferred().addCallback(lambda x: 1 // 0).callback(1)
+
+        gc.collect()
+        self._check()
+
+        self.assertEqual(2, len(self.c))
+        msg = log.textFromEventDict(self.c[-1])
+        expected = "Unhandled Error\nTraceback "
+        self.assertTrue(msg.startswith(expected),
+                        "Expected message starting with: {0!r}".
+                            format(expected))
+
+
+    def test_errorLogDebugInfo(self):
+        """
+        Verify that when a L{Deferred} with no references to it is fired,
+        the logged message includes debug info if debugging on the deferred
+        is enabled.
+        """
+        def doit():
+            d = defer.Deferred()
+            d.debug = True
+            d.addCallback(lambda x: 1 // 0)
+            d.callback(1)
+
+        doit()
+        gc.collect()
+        self._check()
+
+        self.assertEqual(2, len(self.c))
+        msg = log.textFromEventDict(self.c[-1])
+        expected = "(debug:  I"
+        self.assertTrue(msg.startswith(expected),
+                        "Expected message starting with: {0!r}".
+                            format(expected))
+
+
     def test_chainedErrorCleanup(self):
         """
         If one Deferred with an error result is returned from a callback on
@@ -1968,7 +2056,7 @@ class LogTestCase(unittest.SynchronousTestCase):
 
 
 
-class DeferredTestCaseII(unittest.SynchronousTestCase):
+class DeferredListEmptyTests(unittest.SynchronousTestCase):
     def setUp(self):
         self.callbackRan = 0
 
@@ -1986,7 +2074,7 @@ class DeferredTestCaseII(unittest.SynchronousTestCase):
 
 
 
-class OtherPrimitives(unittest.SynchronousTestCase, ImmediateFailureMixin):
+class OtherPrimitivesTests(unittest.SynchronousTestCase, ImmediateFailureMixin):
     def _incr(self, result):
         self.counter += 1
 
@@ -2228,7 +2316,7 @@ class OtherPrimitives(unittest.SynchronousTestCase, ImmediateFailureMixin):
 
 
 
-class DeferredFilesystemLockTestCase(unittest.TestCase):
+class DeferredFilesystemLockTests(unittest.TestCase):
     """
     Test the behavior of L{DeferredFilesystemLock}
     """

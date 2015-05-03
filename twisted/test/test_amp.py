@@ -36,6 +36,11 @@ else:
     skipSSL = None
 
 
+
+tz = amp._FixedOffsetTZInfo.fromSignHoursMinutes
+
+
+
 class TestProto(protocol.Protocol):
     """
     A trivial protocol for use in testing where a L{Protocol} is expected.
@@ -402,7 +407,7 @@ class AmpBoxTests(unittest.TestCase):
 
 
 
-class ParsingTest(unittest.TestCase):
+class ParsingTests(unittest.TestCase):
 
     def test_booleanValues(self):
         """
@@ -542,7 +547,7 @@ class CommandDispatchTests(unittest.TestCase):
     and responses using Command.responder decorator.
 
     Note: Originally, AMP's factoring was such that many tests for this
-    functionality are now implemented as full round-trip tests in L{AMPTest}.
+    functionality are now implemented as full round-trip tests in L{AMPTests}.
     Future tests should be written at this level instead, to ensure API
     compatibility and to provide more granular, readable units of test
     coverage.
@@ -1193,7 +1198,7 @@ class BinaryProtocolTests(unittest.TestCase):
 
 
 
-class AMPTest(unittest.TestCase):
+class AMPTests(unittest.TestCase):
 
     def test_interfaceDeclarations(self):
         """
@@ -1893,7 +1898,7 @@ class SecurableProto(FactoryNotifier):
 
 
 
-class TLSTest(unittest.TestCase):
+class TLSTests(unittest.TestCase):
     def test_startingTLS(self):
         """
         Verify that starting TLS and succeeding at handshaking sends all the
@@ -2000,7 +2005,7 @@ class TLSTest(unittest.TestCase):
 
 
 
-class TLSNotAvailableTest(unittest.TestCase):
+class TLSNotAvailableTests(unittest.TestCase):
     """
     Tests what happened when ssl is not available in current installation.
     """
@@ -2266,7 +2271,7 @@ if ssl is not None:
     tempcert = tempSelfSigned()
 
 
-class LiveFireTLSTestCase(LiveFireBase, unittest.TestCase):
+class LiveFireTLSTests(LiveFireBase, unittest.TestCase):
     clientProto = SecurableProto
     serverProto = SecurableProto
     def test_liveFireCustomTLS(self):
@@ -2318,7 +2323,7 @@ class SlightlySmartTLS(SimpleSymmetricCommandProtocol):
     amp.StartTLS.responder(getTLSVars)
 
 
-class PlainVanillaLiveFire(LiveFireBase, unittest.TestCase):
+class PlainVanillaLiveFireTests(LiveFireBase, unittest.TestCase):
 
     clientProto = SimpleSymmetricCommandProtocol
     serverProto = SimpleSymmetricCommandProtocol
@@ -2336,7 +2341,7 @@ class PlainVanillaLiveFire(LiveFireBase, unittest.TestCase):
 
 
 
-class WithServerTLSVerification(LiveFireBase, unittest.TestCase):
+class WithServerTLSVerificationTests(LiveFireBase, unittest.TestCase):
     clientProto = SimpleSymmetricCommandProtocol
     serverProto = SlightlySmartTLS
 
@@ -2475,7 +2480,7 @@ class ProtocolIncludingCommandWithDifferentCommandType(
 
 
 
-class CommandTestCase(unittest.TestCase):
+class CommandTests(unittest.TestCase):
     """
     Tests for L{amp.Argument} and L{amp.Command}.
     """
@@ -2844,9 +2849,8 @@ class ListOfDateTimeTests(unittest.TestCase, ListOfTestsMixin):
     elementType = amp.DateTime()
 
     strings = {
-        "christmas":
-            "\x00\x202010-12-25T00:00:00.000000-00:00"
-            "\x00\x202010-12-25T00:00:00.000000-00:00",
+        "christmas": "\x00\x202010-12-25T00:00:00.000000-00:00"
+                     "\x00\x202010-12-25T00:00:00.000000-00:00",
         "christmas in eu": "\x00\x202010-12-25T00:00:00.000000+01:00",
         "christmas in iran": "\x00\x202010-12-25T00:00:00.000000+03:30",
         "christmas in nyc": "\x00\x202010-12-25T00:00:00.000000-05:00",
@@ -2857,26 +2861,20 @@ class ListOfDateTimeTests(unittest.TestCase, ListOfTestsMixin):
     objects = {
         "christmas": [
             datetime.datetime(2010, 12, 25, 0, 0, 0, tzinfo=amp.utc),
-            datetime.datetime(2010, 12, 25, 0, 0, 0,
-                tzinfo=amp._FixedOffsetTZInfo('+', 0, 0)),
+            datetime.datetime(2010, 12, 25, 0, 0, 0, tzinfo=tz('+', 0, 0)),
         ],
         "christmas in eu": [
-            datetime.datetime(2010, 12, 25, 0, 0, 0,
-                tzinfo=amp._FixedOffsetTZInfo('+', 1, 0)),
+            datetime.datetime(2010, 12, 25, 0, 0, 0, tzinfo=tz('+', 1, 0)),
         ],
         "christmas in iran": [
-            datetime.datetime(2010, 12, 25, 0, 0, 0,
-                tzinfo=amp._FixedOffsetTZInfo('+', 3, 30)),
+            datetime.datetime(2010, 12, 25, 0, 0, 0, tzinfo=tz('+', 3, 30)),
         ],
         "christmas in nyc": [
-            datetime.datetime(2010, 12, 25, 0, 0, 0,
-                tzinfo=amp._FixedOffsetTZInfo('-', 5, 0)),
+            datetime.datetime(2010, 12, 25, 0, 0, 0, tzinfo=tz('-', 5, 0)),
         ],
         "previous tests": [
-            datetime.datetime(2010, 12, 25, 0, 0, 0,
-                tzinfo=amp._FixedOffsetTZInfo('+', 3, 19)),
-            datetime.datetime(2010, 12, 25, 0, 0, 0,
-                tzinfo=amp._FixedOffsetTZInfo('-', 6, 59)),
+            datetime.datetime(2010, 12, 25, 0, 0, 0, tzinfo=tz('+', 3, 19)),
+            datetime.datetime(2010, 12, 25, 0, 0, 0, tzinfo=tz('-', 6, 59)),
         ],
     }
 
@@ -3085,7 +3083,7 @@ class DateTimeTests(unittest.TestCase):
     Tests for L{amp.DateTime}, L{amp._FixedOffsetTZInfo}, and L{amp.utc}.
     """
     string = '9876-01-23T12:34:56.054321-01:23'
-    tzinfo = amp._FixedOffsetTZInfo('-', 1, 23)
+    tzinfo = tz('-', 1, 23)
     object = datetime.datetime(9876, 1, 23, 12, 34, 56, 54321, tzinfo)
 
     def test_invalidString(self):
@@ -3129,9 +3127,9 @@ class DateTimeTests(unittest.TestCase):
 
 
 
-class FixedOffsetTZInfoTests(unittest.TestCase):
+class UTCTests(unittest.TestCase):
     """
-    Tests for L{amp._FixedOffsetTZInfo} and L{amp.utc}.
+    Tests for L{amp.utc}.
     """
 
     def test_tzname(self):
@@ -3157,16 +3155,16 @@ class FixedOffsetTZInfoTests(unittest.TestCase):
 
     def test_badSign(self):
         """
-        L{amp._FixedOffsetTZInfo} raises L{ValueError} if passed an offset sign
-        other than C{'+'} or C{'-'}.
+        L{amp._FixedOffsetTZInfo.fromSignHoursMinutes} raises L{ValueError} if
+        passed an offset sign other than C{'+'} or C{'-'}.
         """
-        self.assertRaises(ValueError, amp._FixedOffsetTZInfo, '?', 0, 0)
+        self.assertRaises(ValueError, tz, '?', 0, 0)
 
 
 
 if not interfaces.IReactorSSL.providedBy(reactor):
     skipMsg = 'This test case requires SSL support in the reactor'
-    TLSTest.skip = skipMsg
-    LiveFireTLSTestCase.skip = skipMsg
-    PlainVanillaLiveFire.skip = skipMsg
-    WithServerTLSVerification.skip = skipMsg
+    TLSTests.skip = skipMsg
+    LiveFireTLSTests.skip = skipMsg
+    PlainVanillaLiveFireTests.skip = skipMsg
+    WithServerTLSVerificationTests.skip = skipMsg
