@@ -425,6 +425,17 @@ except ImportError:
     # Python 3+
     FileType = IOBase
 
+try:
+    import _winreg as winreg
+except ImportError:
+    try:
+        # Python 3+
+        import winreg
+    except ImportError:
+        # Not windows but export winreg anyway and
+        # let the downstream module decide what to do.
+        winreg = NotImplemented
+
 
 __all__ = [
     "reraise",
@@ -444,4 +455,5 @@ __all__ = [
     "StringType",
     "InstanceType",
     "FileType",
+    "winreg"
     ]

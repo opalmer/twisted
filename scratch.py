@@ -5,78 +5,12 @@ from twisted.python.win32 import quoteArguments
 
 ffi = FFI()
 ffi.set_unicode(True)
-ffi.cdef("""
 
-typedef struct {
-    DWORD  nLength;
-    LPVOID lpSecurityDescriptor;
-    BOOL   bInheritHandle;
-} SECURITY_ATTRIBUTES, *PSECURITY_ATTRIBUTES, *LPSECURITY_ATTRIBUTES;
+WIN32C = open("twisted/python/win32.c", "r").read()
+WIN32H = open("twisted/python/win32.h", "r").read()
 
-typedef struct {
-    DWORD  cb;
-    LPTSTR lpReserved;
-    LPTSTR lpDesktop;
-    LPTSTR lpTitle;
-    DWORD  dwX;
-    DWORD  dwY;
-    DWORD  dwXSize;
-    DWORD  dwYSize;
-    DWORD  dwXCountChars;
-    DWORD  dwYCountChars;
-    DWORD  dwFillAttribute;
-    DWORD  dwFlags;
-    WORD   wShowWindow;
-    WORD   cbReserved2;
-    LPBYTE lpReserved2;
-    HANDLE hStdInput;
-    HANDLE hStdOutput;
-    HANDLE hStdError;
-} STARTUPINFO, *LPSTARTUPINFO;
-
-typedef struct {
-  HANDLE hProcess;
-  HANDLE hThread;
-  DWORD  dwProcessId;
-  DWORD  dwThreadId;
-} PROCESS_INFORMATION, *LPPROCESS_INFORMATION;
-
-
-// Constants we need exposed on the compiled lib.  The values for these
-// are bound when the library is built.
-#define PIPE_NOWAIT ...
-#define DUPLICATE_SAME_ACCESS ...
-#define STARTF_USESTDHANDLES ...
-#define DUPLICATE_SAME_ACCESS ...
-#define _O_BINARY ...
-#define _O_TEXT ...
-#define DUPLICATE_SAME_ACCESS ...
-#define CREATE_UNICODE_ENVIRONMENT ...
-#define INFINITE ...
-
-// Other functions we're exposing
-int open_handle(HANDLE, int);
-
-// Windows API functions we're exposing
-BOOL CreatePipe(PHANDLE, PHANDLE, LPSECURITY_ATTRIBUTES, DWORD);
-BOOL SetNamedPipeHandleState(HANDLE, LPDWORD, LPDWORD, LPDWORD);
-HANDLE GetCurrentProcess();
-BOOL DuplicateHandle(HANDLE, HANDLE, HANDLE, LPHANDLE, DWORD, BOOL, DWORD);
-BOOL CreateProcess(
-    LPCTSTR, LPTSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES, BOOL,
-    DWORD, LPVOID, LPCTSTR, LPSTARTUPINFO, LPPROCESS_INFORMATION);
-BOOL CloseHandle(HANDLE);
-DWORD WaitForSingleObject(HANDLE, DWORD);
-""")
-
-_lib = ffi.verify("""
-    #include <windows.h>
-    #include <fcntl.h>
-
-    int open_handle(HANDLE handle, int mode) {
-        return _open_osfhandle((INT_PTR)handle, mode);
-    };
-""", libraries=["kernel32"])
+ffi.cdef(WIN32C)
+_lib = ffi.verify(WIN32H, libraries=["kernel32"])
 
 
 # TODO: documentation
@@ -97,6 +31,7 @@ def CreatePipe():
     # assert _lib.open_handle(hWriter[0], _lib._O_BINARY) != -1
 
     return hReader[0], hWriter[0]
+
 
 # TODO: documentation
 def SetNamedPipeHandlerState(handle, state=None):
@@ -204,27 +139,33 @@ def CreateProcess(command, hStdinR, hStdoutW, hStderrW, environment=None):
     # TODO: remove this once done testing
     _lib.WaitForSingleObject(process_information[0].hProcess, _lib.INFINITE)
 
+from twisted.python import winapi
+# from os.path import isfile
 
-hStdoutR, hStdoutW = CreatePipe()
-hStderrR, hStderrW = CreatePipe()
-hStdinR, hStdinW = CreatePipe()
+# ffi, lib = winapi.load(winapi.API_HEADER, winapi.API_SOURCE)
+print dir(winapi.lib)
 
-SetNamedPipeHandlerState(hStdinW, state=_lib.PIPE_NOWAIT)
-
-tmp = DuplicateHandle(hStdoutR)
-CloseHandle(hStdoutR)
-hStdoutR = tmp
-
-tmp = DuplicateHandle(hStderrR)
-CloseHandle(hStdoutR)
-hStderrR = tmp
-
-tmp = DuplicateHandle(hStdinW)
-CloseHandle(hStdoutR)
-hStdinW = tmp
-
-CreateProcess(
-    ["ping", "-c", "2", "127.0.0.1"],
-    hStdinR, hStdoutR, hStdoutW
-)
-
+#
+# hStdoutR, hStdoutW = CreatePipe()
+# hStderrR, hStderrW = CreatePipe()
+# hStdinR, hStdinW = CreatePipe()
+#
+# SetNamedPipeHandlerState(hStdinW, state=_lib.PIPE_NOWAIT)
+#
+# tmp = DuplicateHandle(hStdoutR)
+# CloseHandle(hStdoutR)
+# hStdoutR = tmp
+#
+# tmp = DuplicateHandle(hStderrR)
+# CloseHandle(hStdoutR)
+# hStderrR = tmp
+#
+# tmp = DuplicateHandle(hStdinW)
+# CloseHandle(hStdoutR)
+# hStdinW = tmp
+#
+# CreateProcess(
+#     ["ping", "-c", "2", "127.0.0.1"],
+#     hStdinR, hStdoutR, hStdoutW
+# )
+#

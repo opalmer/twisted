@@ -15,14 +15,16 @@ from __future__ import division, absolute_import
 
 import re
 import os
+from functools import wraps
 
-try:
-    import win32api
-    import win32con
-except ImportError:
-    pass
+from cffi import FFI
 
 from twisted.python.runtime import platform
+from twisted.python.compat import winreg
+from twisted.python.util import sibpath
+
+API_HEADER = sibpath(__file__, "win32.h")
+API_SOURCE = sibpath(__file__, "win32.c")
 
 # http://msdn.microsoft.com/library/default.asp?url=/library/en-us/debug/base/system_error_codes.asp
 ERROR_FILE_NOT_FOUND = 2
@@ -43,7 +45,6 @@ try:
 except NameError:
     WindowsError = FakeWindowsError
 
-# XXX fix this to use python's builtin _winreg?
 
 def getProgramsMenuPath():
     """
@@ -56,18 +57,31 @@ def getProgramsMenuPath():
     """
     if not platform.isWindows():
         return "C:\\Windows\\Start Menu\\Programs"
-    keyname = 'SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders'
-    hShellFolders = win32api.RegOpenKeyEx(win32con.HKEY_LOCAL_MACHINE,
-                                          keyname, 0, win32con.KEY_READ)
-    return win32api.RegQueryValueEx(hShellFolders, 'Common Programs')[0]
+
+    shell_folders = winreg.OpenKey(
+        winreg.HKEY_LOCAL_MACHINE,
+        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+        0, winreg.KEY_READ
+    )
+    try:
+        value, _ = winreg.QueryValueEx(shell_folders, "Common Programs")
+        return value
+    finally:
+        shell_folders.Close()
 
 
 def getProgramFilesPath():
     """Get the path to the Program Files folder."""
-    keyname = 'SOFTWARE\\Microsoft\\Windows\\CurrentVersion'
-    currentV = win32api.RegOpenKeyEx(win32con.HKEY_LOCAL_MACHINE,
-                                     keyname, 0, win32con.KEY_READ)
-    return win32api.RegQueryValueEx(currentV, 'ProgramFilesDir')[0]
+    current_value = winreg.OpenKey(
+        winreg.HKEY_LOCAL_MACHINE,
+        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion",
+        0, winreg.KEY_READ
+    )
+    try:
+        value, _ = winreg.QueryValueEx(current_value, "ProgramFilesDir")
+        return value
+    finally:
+        current_value.Close()
 
 
 _cmdLineQuoteRe = re.compile(r'(\\*)"')
@@ -167,3 +181,45 @@ class _ErrorFormatter(object):
         return os.strerror(errorcode)
 
 formatError = _ErrorFormatter.fromEnvironment().formatError
+
+
+def requires_windows(func):
+    """
+    A decorator which raises NotImplementedError on non-windows
+    platforms.  Use this to decorate functions which should only
+    be executed on Windows.
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if os.name != "nt":
+            raise NotImplementedError(
+                "win32.%s() is only implemented on Windows" % func.func_name)
+
+        return func(*args, **kwargs)
+    return wrapper
+
+
+@requires_windows
+def get_library(header, source):
+    """
+    This function sets up an instance of L{ffi.api.FFI} and complies
+    the header and source files.
+    """
+    ffi = FFI()
+    ffi.set_unicode(True)
+
+    # NOTE: You must load the cdef before calling verify() below.
+    with open(source, "rb") as source:
+        ffi.cdef(source.read())
+
+    with open(header, "rb") as header:
+        lib = ffi.verify(header.read(), libraries=["kernel32"])
+
+    return ffi, lib
+
+
+try:
+    _ffi, _lib = get_library(API_HEADER, API_SOURCE)
+except NotImplementedError:
+    _ffi = NotImplemented
+    _lib = NotImplemented
