@@ -15,7 +15,6 @@ from __future__ import division, absolute_import
 
 import re
 import os
-from functools import wraps
 
 try:
     import win32api
@@ -23,19 +22,11 @@ try:
 except ImportError:
     pass
 
+import cffi
+
 from twisted.python.runtime import platform
 from twisted.python.util import sibpath
 
-API_HEADER = sibpath(__file__, "win32.h")
-API_SOURCE = sibpath(__file__, "win32.c")
-
-# http://msdn.microsoft.com/library/default.asp?url=/library/en-us/debug/base/system_error_codes.asp
-ERROR_FILE_NOT_FOUND = 2
-ERROR_PATH_NOT_FOUND = 3
-ERROR_INVALID_NAME = 123
-ERROR_DIRECTORY = 267
-
-O_BINARY = getattr(os, "O_BINARY", 0)
 
 class FakeWindowsError(OSError):
     """
@@ -47,6 +38,86 @@ try:
     WindowsError = WindowsError
 except NameError:
     WindowsError = FakeWindowsError
+
+
+class WindowsAPIError(WindowsError):
+    """
+    An error which is raised when a Windows API call has
+    failed. This exception class is a replacement for
+    L{pywintypes.error}.
+    """
+
+
+def _buildLibraryFromSource(
+        header=None, source=None, libraries=None, tmpdir=False):
+    """
+    This function takes a C header and source code and produces an
+    instance of L{FFI} as well as the built library. If ``source`` and
+    ``header`` are not provided then the default behavior is to load
+    win32.h and win32.c from the same directory that this file is in.
+
+    @param header: The C header declarations.
+    @type header: C{str}
+
+    @param source: The source code of the library to compile.
+    @type source: C{str}
+
+    @param libraries: Additional libraries to include while compiling
+    @type libraries: C{list}
+
+    @param tmpdir: The directory to provide to L{FFI.verify} which is where
+                    cffi should cache the compiled results.  Setting this value
+                    to None will result in a TypeError being raised from
+                    cffi.
+    @type tmpdir: C{str}
+    """
+    if header is None:
+        with open(sibpath(__file__, "win32.h"), "rb") as header:
+            header = header.read()
+
+    if source is None:
+        with open(sibpath(__file__, "win32.c"), "rb") as source:
+            source = source.read()
+
+    ffi = cffi.FFI()
+    ffi.set_unicode(True)
+    ffi.cdef(header)
+    return ffi, ffi.verify(source, libraries=libraries, tmpdir=tmpdir)
+
+if os.name == "nt":
+    _ffi, winapi = _buildLibraryFromSource(libraries=["kernel32"])
+
+    # TODO: deprecate module level attributes?
+    ERROR_FILE_NOT_FOUND = winapi.ERROR_FILE_NOT_FOUND
+    ERROR_PATH_NOT_FOUND = winapi.ERROR_PATH_NOT_FOUND
+    ERROR_INVALID_NAME = winapi.ERROR_INVALID_NAME
+    ERROR_DIRECTORY = winapi.ERROR_DIRECTORY
+    O_BINARY = winapi._O_BINARY
+else:
+    _ffi = None
+    winapi = None
+
+
+def OpenProcess(dwDesiredAccess=0, bInheritHandle=False, dwProcessId=None):
+    """
+    This function wraps the CFFI implementation of Microsoft's OpenProcess()
+    function:
+
+        https://msdn.microsoft.com/en-us/library/windows/desktop/ms684320(v=vs.85).aspx
+
+    @param dwDesiredAccess: The desired access right(s) to the process
+    @type dwDesiredAccess: C{int}
+
+    @param bInheritHandle: Should child processes inherit the handle of this process
+    @typpe bInheritHandle: C{bool}
+    """
+    if dwProcessId is None:
+        dwProcessId = os.getpid()
+
+    winapi.OpenProcess(dwDesiredAccess, bInheritHandle, dwProcessId)
+    code, error = _ffi.getwinerror()
+    if code != 0:
+        raise WindowsAPIError(code, "OpenProcess", error)
 
 
 def getProgramsMenuPath():
@@ -133,10 +204,12 @@ class _ErrorFormatter(object):
             from ctypes import WinError
         except ImportError:
             WinError = None
-        try:
-            from win32api import FormatMessage
-        except ImportError:
-            FormatMessage = None
+
+        FormatMessage = None
+        if _ffi is not None:
+            FormatMessage = \
+                lambda code=-1: _ffi.getwinerror(code=code)[1] + ".\r\n"
+
         try:
             from socket import errorTab
         except ImportError:
@@ -171,45 +244,3 @@ class _ErrorFormatter(object):
         return os.strerror(errorcode)
 
 formatError = _ErrorFormatter.fromEnvironment().formatError
-
-
-def requires_windows(func):
-    """
-    A decorator which raises NotImplementedError on non-windows
-    platforms.  Use this to decorate functions which should only
-    be executed on Windows.
-    """
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        if os.name != "nt":
-            raise NotImplementedError(
-                "win32.%s() is only implemented on Windows" % func.func_name)
-
-        return func(*args, **kwargs)
-    return wrapper
-
-
-@requires_windows
-def get_library(header, source):
-    """
-    This function sets up an instance of L{ffi.api.FFI} and complies
-    the header and source files.
-    """
-    ffi = FFI()
-    ffi.set_unicode(True)
-
-    # NOTE: You must load the cdef before calling verify() below.
-    with open(source, "rb") as source:
-        ffi.cdef(source.read())
-
-    with open(header, "rb") as header:
-        lib = ffi.verify(header.read(), libraries=["kernel32"])
-
-    return ffi, lib
-
-
-try:
-    _ffi, _lib = get_library(API_HEADER, API_SOURCE)
-except NotImplementedError:
-    _ffi = NotImplemented
-    _lib = NotImplemented
