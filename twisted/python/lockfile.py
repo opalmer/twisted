@@ -14,6 +14,7 @@ import errno, os
 from time import time as _uniquefloat
 
 from twisted.python.runtime import platform
+from twisted.python.win32 import WindowsAPIError, OpenProcess, winapi
 
 def unique():
     return str(int(_uniquefloat() * 1000))
@@ -28,26 +29,21 @@ if not platform.isWindows():
 else:
     _windows = True
 
-    try:
-        from win32api import OpenProcess
-        import pywintypes
-    except ImportError:
-        kill = None
-    else:
-        ERROR_ACCESS_DENIED = 5
-        ERROR_INVALID_PARAMETER = 87
+    # TODO: deprecate module level attributes?
+    ERROR_ACCESS_DENIED = winapi.ERROR_ACCESS_DENIED
+    ERROR_INVALID_PARAMETER = winapi.ERROR_INVALID_PARAMETER
 
-        def kill(pid, signal):
-            try:
-                OpenProcess(0, 0, pid)
-            except pywintypes.error as e:
-                if e.args[0] == ERROR_ACCESS_DENIED:
-                    return
-                elif e.args[0] == ERROR_INVALID_PARAMETER:
-                    raise OSError(errno.ESRCH, None)
-                raise
-            else:
-                raise RuntimeError("OpenProcess is required to fail.")
+    def kill(pid, signal):
+        try:
+            OpenProcess(dwProcessId=pid)
+        except WindowsAPIError as e:
+            if e.args[0] == winapi.ERROR_ACCESS_DENIED:
+                return
+            elif e.args[0] == winapi.ERROR_INVALID_PARAMETER:
+                raise OSError(errno.ESRCH, None)
+            raise
+        else:
+            raise RuntimeError("OpenProcess is required to fail.")
 
     _open = file
 
