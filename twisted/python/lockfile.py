@@ -14,7 +14,7 @@ import errno, os
 from time import time as _uniquefloat
 
 from twisted.python.runtime import platform
-from twisted.python.win32 import WindowsAPIError, OpenProcess, winapi
+from twisted.python.win32 import WindowsAPIError, OpenProcess, kernel32
 
 def unique():
     return str(int(_uniquefloat() * 1000))
@@ -30,16 +30,16 @@ else:
     _windows = True
 
     # TODO: deprecate module level attributes?
-    ERROR_ACCESS_DENIED = winapi.ERROR_ACCESS_DENIED
-    ERROR_INVALID_PARAMETER = winapi.ERROR_INVALID_PARAMETER
+    ERROR_ACCESS_DENIED = kernel32.ERROR_ACCESS_DENIED
+    ERROR_INVALID_PARAMETER = kernel32.ERROR_INVALID_PARAMETER
 
     def kill(pid, signal):
         try:
             OpenProcess(dwProcessId=pid)
         except WindowsAPIError as e:
-            if e.args[0] == winapi.ERROR_ACCESS_DENIED:
+            if e.args[0] == kernel32.ERROR_ACCESS_DENIED:
                 return
-            elif e.args[0] == winapi.ERROR_INVALID_PARAMETER:
+            elif e.args[0] == kernel32.ERROR_INVALID_PARAMETER:
                 raise OSError(errno.ESRCH, None)
             raise
         else:

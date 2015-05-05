@@ -57,7 +57,7 @@ class GetLibraryFromSourceTests(unittest.TestCase):
         """
         tmpdir = tempfile.mkdtemp()
         self.addCleanup(cffi.verifier.cleanup_tmpdir, tmpdir=tmpdir)
-        ffi, lib = win32._buildLibraryFromSource(
+        ffi, lib = win32._getWindowsLibraries(
             "", "", libraries=["kernel32"], tmpdir=tmpdir)
         self.assertTrue(ffi._windows_unicode)
 
@@ -72,7 +72,7 @@ class GetLibraryFromSourceTests(unittest.TestCase):
         self.addCleanup(cffi.verifier.cleanup_tmpdir, tmpdir=tmpdir)
         header = "int addTwo(int value);"
         source = "int addTwo(int value) { return value + 2; }"
-        ffi, lib = win32._buildLibraryFromSource(
+        ffi, lib = win32._getWindowsLibraries(
             header, source, libraries=["kernel32"], tmpdir=tmpdir)
         self.assertEqual(lib.addTwo(2), 4)
 

@@ -48,13 +48,9 @@ class WindowsAPIError(WindowsError):
     """
 
 
-def _buildLibraryFromSource(
-        header=None, source=None, libraries=None, tmpdir=False):
+def _getWindowsLibraries():
     """
-    This function takes a C header and source code and produces an
-    instance of L{FFI} as well as the built library. If ``source`` and
-    ``header`` are not provided then the default behavior is to load
-    win32.h and win32.c from the same directory that this file is in.
+    This function will return a tuple containing
 
     @param header: The C header declarations.
     @type header: C{str}
@@ -71,31 +67,27 @@ def _buildLibraryFromSource(
                     cffi.
     @type tmpdir: C{str}
     """
-    if header is None:
-        with open(sibpath(__file__, "win32.h"), "rb") as header:
-            header = header.read()
+    kernel32_ffi = cffi.FFI()
+    kernel32_ffi.set_unicode(True)
 
-    if source is None:
-        with open(sibpath(__file__, "win32.c"), "rb") as source:
-            source = source.read()
+    with open(sibpath(__file__, "win32_kernel.h"), "rb") as header:
+        kernel32_ffi.cdef(header.read())
 
-    ffi = cffi.FFI()
-    ffi.set_unicode(True)
-    ffi.cdef(header)
-    return ffi, ffi.verify(source, libraries=libraries, tmpdir=tmpdir)
+    kernel32 = kernel32_ffi.dlopen("kernel32")
 
+    return kernel32_ffi, kernel32
+
+getWindowsError = None
 if os.name == "nt":
-    _ffi, winapi = _buildLibraryFromSource(libraries=["kernel32"])
+    _kernel32_ffi, kernel32 = _getWindowsLibraries()
+    getWindowsError = _kernel32_ffi.getwinerror
 
-    # TODO: deprecate module level attributes?
-    ERROR_FILE_NOT_FOUND = winapi.ERROR_FILE_NOT_FOUND
-    ERROR_PATH_NOT_FOUND = winapi.ERROR_PATH_NOT_FOUND
-    ERROR_INVALID_NAME = winapi.ERROR_INVALID_NAME
-    ERROR_DIRECTORY = winapi.ERROR_DIRECTORY
-    O_BINARY = winapi._O_BINARY
-else:
-    _ffi = None
-    winapi = None
+    # TODO: deprecate module level attribugtes?
+    ERROR_FILE_NOT_FOUND = kernel32.ERROR_FILE_NOT_FOUND
+    ERROR_PATH_NOT_FOUND = kernel32.ERROR_PATH_NOT_FOUND
+    ERROR_INVALID_NAME = kernel32.ERROR_INVALID_NAME
+    ERROR_DIRECTORY = kernel32.ERROR_DIRECTORY
+    O_BINARY = kernel32._O_BINARY
 
 
 def OpenProcess(dwDesiredAccess=0, bInheritHandle=False, dwProcessId=None):
@@ -114,8 +106,8 @@ def OpenProcess(dwDesiredAccess=0, bInheritHandle=False, dwProcessId=None):
     if dwProcessId is None:
         dwProcessId = os.getpid()
 
-    winapi.OpenProcess(dwDesiredAccess, bInheritHandle, dwProcessId)
-    code, error = _ffi.getwinerror()
+    kernel32.OpenProcess(dwDesiredAccess, bInheritHandle, dwProcessId)
+    code, error = getWindowsError()
     if code != 0:
         raise WindowsAPIError(code, "OpenProcess", error)
 
@@ -206,9 +198,9 @@ class _ErrorFormatter(object):
             WinError = None
 
         FormatMessage = None
-        if _ffi is not None:
+        if getWindowsError is not None:
             FormatMessage = \
-                lambda code=-1: _ffi.getwinerror(code=code)[1] + ".\r\n"
+                lambda code=-1: getWindowsError(code=code)[1] + ".\r\n"
 
         try:
             from socket import errorTab
