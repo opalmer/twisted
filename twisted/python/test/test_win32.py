@@ -5,10 +5,6 @@
 Tests for L{twisted.python.win32}.
 """
 
-import tempfile
-
-import cffi.verifier
-
 from twisted.trial import unittest
 from twisted.python import win32
 
@@ -42,12 +38,9 @@ class CommandLineQuotingTests(unittest.TestCase):
         self.assertEqual(win32.cmdLineQuote(''), '""')
 
 
-class GetLibraryFromSourceTests(unittest.TestCase):
+class TestWindowsLibrariesTest(unittest.TestCase):
     """
-    Tests for L{twisted.python.win32.buildLibraryFromSource}.  We will make
-    an attempt to cleanup the directory cffi creates but we can't remove
-    the directory itself because of the pyd file that gets loaded into
-    memory.
+    Tests for L{twisted.python.win32._getWindowsLibraries}.
     """
     def test_setsUnicode(self):
         """
@@ -55,24 +48,89 @@ class GetLibraryFromSourceTests(unittest.TestCase):
         unicode.  This is required for some of the types we're using
         in the Windows api.
         """
-        tmpdir = tempfile.mkdtemp()
-        self.addCleanup(cffi.verifier.cleanup_tmpdir, tmpdir=tmpdir)
-        ffi, lib = win32._getWindowsLibraries(
-            "", "", libraries=["kernel32"], tmpdir=tmpdir)
+        ffi = win32._getWindowsLibraries()[0]
         self.assertTrue(ffi._windows_unicode)
 
-    def test_buildsFunction(self):
-        """
-        Tests to ensure that the library is complied properly and produces
-        a function that we're able to use.  We do this not only to ensure
-        our invocation of cffi works but also to ensure that the calls to
-        FFI.cdef and FFI.verify are made in the proper order.
-        """
-        tmpdir = tempfile.mkdtemp()
-        self.addCleanup(cffi.verifier.cleanup_tmpdir, tmpdir=tmpdir)
-        header = "int addTwo(int value);"
-        source = "int addTwo(int value) { return value + 2; }"
-        ffi, lib = win32._getWindowsLibraries(
-            header, source, libraries=["kernel32"], tmpdir=tmpdir)
-        self.assertEqual(lib.addTwo(2), 4)
 
+class RaiseErrorIfZeroTests(unittest.TestCase):
+    """
+    Tests for L{twisted.python.win32._raiseErrorIfZero}.
+    """
+    def test_raisesTypeError(self):
+        """
+        TypeError should be raised if the first argument
+        to _raiseErrorIfZero is not an integer.
+        """
+        with self.assertRaises(TypeError):
+            win32._raiseErrorIfZero(1.0, "")
+
+    def test_raisesWindowsAPIError(self):
+        """
+        Test that win32._raiseErrorIfZero(0, "") raises WindowsAPIError
+        """
+        with self.assertRaises(win32.WindowsAPIError):
+            win32._raiseErrorIfZero(0, "")
+
+    def test_noErrorForPositiveInt(self):
+        """
+        Test that win32._raiseErrorIfZero(1, "") does nothing.
+        """
+        win32._raiseErrorIfZero(1, "")
+
+    def test_noErrorForNegativeInt(self):
+        """
+        Test that win32._raiseErrorIfZero(-1, "") does nothing.
+
+        This test exists to guard against a change that modifies the logic
+        of _raiseErrorIfZero from ``if ok == 0:`` to ``if ok >= 0`` or similar
+        statement. The type of errors _raiseErrorIfZero handles are
+        documented by Microsoft such that any non-zero value is considered
+        success.  If this test breaks either _raiseErrorIfZero was updated on
+        purpose to allow for a new value or the value being passed into
+        _raiseErrorIfZero is incorrect and someone thought they found a bug.
+        """
+        win32._raiseErrorIfZero(-1, "")
+
+
+class OpenProcessTests(unittest.TestCase):
+    """
+    Tests for L{twisted.python.win32.OpenProcess}.
+    """
+    def test_openFailure(self):
+        """
+        The default arguments to OpenProcess should
+        cause an exception to be raised because we don't
+        assume what level of access someone will need.
+        """
+        with self.assertRaises(win32.WindowsAPIError):
+            win32.OpenProcess()
+
+    def test_openFailureMessage(self):
+        """
+        Tests the content of the error message.  Normally this is not
+        something we'd test but in this case the exception arguments
+        are used elsewhere in the code base.
+        """
+        try:
+            win32.OpenProcess()
+        except win32.WindowsAPIError as error:
+            self.assertEqual(
+                error.args, (
+                    win32.kernel32.ERROR_ACCESS_DENIED,
+                    "OpenProcess",
+                    "Access is denied"
+                )
+            )
+
+
+class CloseHandleTests(unittest.TestCase):
+    """
+    Tests for L{twisted.python.win32.CloseHandle}.
+    """
+    def test_closesReader(self):
+        """
+        Creates two pipes, closes the reader and then attempts to
+        read from it (which we should not be able to do).
+        """
+        reader, writer = win32.CreatePipe()
+        win32.CloseHandle(reader)

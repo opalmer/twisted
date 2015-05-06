@@ -40,12 +40,16 @@ except NameError:
     WindowsError = FakeWindowsError
 
 
-class WindowsAPIError(WindowsError):
+class WindowsAPIError(Exception):
     """
     An error which is raised when a Windows API call has
-    failed. This exception class is a replacement for
-    L{pywintypes.error}.
+    failed.
     """
+    def __init__(self, code, function, error):
+        super(WindowsAPIError, self).__init__(code, function, error)
+        self.code = code
+        self.function = function
+        self.error = error
 
 
 def _getWindowsLibraries():
@@ -77,23 +81,47 @@ def _getWindowsLibraries():
 
     return kernel32_ffi, kernel32
 
-getWindowsError = None
-if os.name == "nt":
-    _kernel32_ffi, kernel32 = _getWindowsLibraries()
-    getWindowsError = _kernel32_ffi.getwinerror
+O_BINARY = getattr(os, "O_BINARY", None)
 
-    # TODO: deprecate module level attribugtes?
+if os.name == "nt":
+    ffi, kernel32 = _getWindowsLibraries()
+
+    # TODO: deprecate module level attributes?
     ERROR_FILE_NOT_FOUND = kernel32.ERROR_FILE_NOT_FOUND
     ERROR_PATH_NOT_FOUND = kernel32.ERROR_PATH_NOT_FOUND
     ERROR_INVALID_NAME = kernel32.ERROR_INVALID_NAME
     ERROR_DIRECTORY = kernel32.ERROR_DIRECTORY
-    O_BINARY = kernel32._O_BINARY
+
+def _raiseErrorIfZero(ok, function):
+    """
+    Checks to see if there was an error while calling
+    a Windows API function.  This function should only
+    be used on Windows API calls which have a return
+    value of non-zero for success and zero for failure.
+
+    @param ok: The return value from a Windows API function.
+    @type ok: C{int}
+
+    @param function: The name of the function that was called
+    @type function: C{str}
+
+    @raises WindowsAPIError: Raised if ok != 0
+    @raises TypeError: Raised if `ok` is not an integer
+    """
+    # Be sure we're getting an integer here.  Because we're working
+    # with cffi it's possible we could get an object that acts like
+    # an integer without in fact being in integer to `ok`.
+    if not isinstance(ok, int):
+        raise TypeError("Internal error, expected integer for `ok`")
+
+    if ok == 0:
+        code, error = ffi.getwinerror()
+        raise WindowsAPIError(code, function, error)
 
 
 def OpenProcess(dwDesiredAccess=0, bInheritHandle=False, dwProcessId=None):
     """
-    This function wraps the CFFI implementation of Microsoft's OpenProcess()
-    function:
+    This function wraps Microsoft's OpenProcess() function:
 
         https://msdn.microsoft.com/en-us/library/windows/desktop/ms684320(v=vs.85).aspx
 
@@ -101,15 +129,146 @@ def OpenProcess(dwDesiredAccess=0, bInheritHandle=False, dwProcessId=None):
     @type dwDesiredAccess: C{int}
 
     @param bInheritHandle: Should child processes inherit the handle of this process
-    @typpe bInheritHandle: C{bool}
+    @type bInheritHandle: C{bool}
     """
     if dwProcessId is None:
         dwProcessId = os.getpid()
 
     kernel32.OpenProcess(dwDesiredAccess, bInheritHandle, dwProcessId)
-    code, error = getWindowsError()
+    code, error = ffi.getwinerror()
     if code != 0:
         raise WindowsAPIError(code, "OpenProcess", error)
+
+
+def CreatePipe(inheritHandle=True):
+    """
+    This function wraps Microsoft's CreatePipe() function:
+
+        https://msdn.microsoft.com/en-us/library/windows/desktop/aa365779(v=vs.85).aspx
+
+    @param inheritHandle: When True the handles returned will be inherited
+                          by any new child process.
+    @type inheritHandle: C{bool}
+
+    @return: Returns a tuple containing a reader PHANDLE and a writer PHANDLE
+    @rtype: C{tuple}
+    """
+    reader = ffi.new("PHANDLE")
+    writer = ffi.new("PHANDLE")
+    securityAttributes = ffi.new(
+        "SECURITY_ATTRIBUTES[1]", [{
+            "nLength": ffi.sizeof("SECURITY_ATTRIBUTES"),
+            "bInheritHandle": inheritHandle,
+            "lpSecurityDescriptor": ffi.NULL
+        }]
+    )
+    ok = kernel32.CreatePipe(reader, writer, securityAttributes, 0)
+    _raiseErrorIfZero(ok, "CreatePipe")
+
+    return reader[0], writer[0]
+
+
+def ReadFile(handle, readBytes):
+    """
+    This function wraps Microsoft's ReadFile() function:
+
+        https://msdn.microsoft.com/en-us/library/windows/desktop/aa365467(v=vs.85).aspx
+
+    @param handle: The handle of file or I/O device to read from.
+
+    @param readBytes: The number of bytes to read from ``handle``
+    @type readBytes: C{int}
+    """
+    output = ffi.new("LPVOID[%d]" % readBytes)
+    ok = kernel32.ReadFile(handle, output, readBytes, ffi.NULL, ffi.NULL)
+    _raiseErrorIfZero(ok, "ReadFile")
+    return output
+
+
+# TODO: parameter type formatting
+def WriteFile(handle, data, overlapped=False):
+    """
+    This function wraps Microsoft's WriteFile() function:
+
+        https://msdn.microsoft.com/en-us/library/windows/desktop/aa365747(v=vs.85).aspx
+
+    @param handle: The handle object to write data to
+
+    @param data: The data to write to the pipe
+    @type data: C{str,unicode}
+
+    @param overlapped: Enable or disable overlapping writes.  This value may
+                       be a boolean any other value that WriteFile() would
+                       normally accept.
+    """
+    size = len(data)
+
+    if isinstance(data, unicode):
+        data = ffi.new("wchar_t[%d]" % size, data)
+    else:
+        data = ffi.new("char[%d]" % size, data)
+
+    if not overlapped:
+        overlapped = ffi.NULL
+
+    bytesWritten = ffi.new("LPDWORD")
+    ok = kernel32.WriteFile(handle, data, size, bytesWritten, overlapped)
+    code, error = ffi.getwinerror()
+
+    # TODO: remove once we know the type of ok (could be TRUE or ok)
+    print "(DEBUG) =============", ok
+
+    if ok != 0 or code == kernel32.ERROR_IO_PENDING:
+        return bytesWritten
+
+    raise WindowsAPIError(code, "WriteFile", error)
+
+
+# TODO: parameter documentation
+def SetNamedPipeHandleState(handle, mode):
+    """
+    This function wraps Microsoft's SetNamedPipeHandleState function:
+
+        https://msdn.microsoft.com/en-us/library/windows/desktop/aa365787(v=vs.85).aspx
+    """
+    ok = kernel32.SetNamedPipeHandleState(handle, mode, ffi.NULL, ffi.NULL)
+    _raiseErrorIfZero(ok, "SetNamedPipeHandleState")
+
+
+def PeekNamedPipe(pipe, bufferSize):
+    """
+    This function wraps Microsoft's PeekNamedPipe() function:
+
+        https://msdn.microsoft.com/en-us/library/windows/desktop/aa365779(v=vs.85).aspx
+
+    @param pipe: The handle of the named pipe to peek into.  This value can
+                 be generated using the output from the L{CreatePipe} call.
+
+    @param bufferSize: The size of the buffer to pass into the nBufferSize
+                       input to the underlying function.
+    @type bufferSize: C{int}
+    """
+    lpBuffer = ffi.new("LPVOID[%d]" % bufferSize)
+    lpBytesLeftThisMessage = ffi.new("LPDWORD")
+
+    ok = kernel32.PeekNamedPipe(
+        pipe, lpBuffer, bufferSize, ffi.NULL, ffi.NULL, lpBytesLeftThisMessage
+    )
+    _raiseErrorIfZero(ok, "PeekNamedPipe")
+
+    return ok, lpBytesLeftThisMessage[0]
+
+
+def CloseHandle(handle):
+    """
+    This function wraps Microsoft's CloseHandle() function:
+
+        https://msdn.microsoft.com/en-us/library/windows/desktop/ms724211(v=vs.85).aspx
+
+    @param handle: The handle to close
+    """
+    ok = kernel32.CloseHandle(handle)
+    _raiseErrorIfZero(ok, "CloseHandle")
 
 
 def getProgramsMenuPath():
@@ -198,9 +357,9 @@ class _ErrorFormatter(object):
             WinError = None
 
         FormatMessage = None
-        if getWindowsError is not None:
+        if ffi is not None:
             FormatMessage = \
-                lambda code=-1: getWindowsError(code=code)[1] + ".\r\n"
+                lambda code=-1: ffi.getwinerror(code=code)[1] + ".\r\n"
 
         try:
             from socket import errorTab
