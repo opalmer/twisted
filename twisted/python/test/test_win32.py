@@ -7,6 +7,7 @@ Tests for L{twisted.python.win32}.
 
 from twisted.trial import unittest
 from twisted.python import win32
+from twisted.python.compat import _PY3
 
 
 class CommandLineQuotingTests(unittest.TestCase):
@@ -90,6 +91,16 @@ class RaiseErrorIfZeroTests(unittest.TestCase):
         _raiseErrorIfZero is incorrect and someone thought they found a bug.
         """
         win32._raiseErrorIfZero(-1, "")
+
+    def test_allowsLongForOk(self):
+        """
+        In Python 2 int and long are two different things however in Python
+        3 there's only int.  This test ensures we accept a long when it's
+        available because the Windows API can sometimes return a long even
+        though a number can fit within an int.
+        """
+        if not _PY3:
+            win32._raiseErrorIfZero(long(1), "")
 
 
 class OpenProcessTests(unittest.TestCase):
