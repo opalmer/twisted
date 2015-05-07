@@ -13,8 +13,9 @@ See also twisted.python.shortcut.
 
 from __future__ import division, absolute_import
 
-import re
 import os
+import re
+import tempfile
 
 try:
     import win32api
@@ -22,10 +23,16 @@ try:
 except ImportError:
     pass
 
+try:
+    long_ = long
+except NameError:  # Python 3
+    long_ = int
+
 import cffi
 
 from twisted.python.runtime import platform
 from twisted.python.util import sibpath
+from twisted.python.compat import _PY3
 
 
 class FakeWindowsError(OSError):
@@ -92,6 +99,31 @@ if os.name == "nt":
     ERROR_INVALID_NAME = kernel32.ERROR_INVALID_NAME
     ERROR_DIRECTORY = kernel32.ERROR_DIRECTORY
 
+    # We can't define these in the header so they're defined
+    # here.
+    FILE_GENERIC_READ = (
+        kernel32.STANDARD_RIGHTS_READ |
+        kernel32.FILE_READ_DATA |
+        kernel32.FILE_READ_ATTRIBUTES |
+        kernel32.FILE_READ_EA |
+        kernel32.SYNCHRONIZE
+    )
+    FILE_GENERIC_WRITE = (
+        kernel32.STANDARD_RIGHTS_WRITE |
+        kernel32.FILE_WRITE_DATA |
+        kernel32.FILE_WRITE_ATTRIBUTES |
+        kernel32.FILE_WRITE_EA |
+        kernel32.FILE_APPEND_DATA |
+        kernel32.SYNCHRONIZE
+    )
+    FILE_GENERIC_EXECUTE = (
+        kernel32.STANDARD_RIGHTS_EXECUTE |
+        kernel32.FILE_READ_ATTRIBUTES |
+        kernel32.FILE_EXECUTE |
+        kernel32.SYNCHRONIZE
+    )
+
+
 def _raiseErrorIfZero(ok, function):
     """
     Checks to see if there was an error while calling
@@ -100,7 +132,7 @@ def _raiseErrorIfZero(ok, function):
     value of non-zero for success and zero for failure.
 
     @param ok: The return value from a Windows API function.
-    @type ok: C{int}
+    @type ok: C{int,long}
 
     @param function: The name of the function that was called
     @type function: C{str}
@@ -111,7 +143,7 @@ def _raiseErrorIfZero(ok, function):
     # Be sure we're getting an integer here.  Because we're working
     # with cffi it's possible we could get an object that acts like
     # an integer without in fact being in integer to `ok`.
-    if not isinstance(ok, int):
+    if not isinstance(ok, (int, long_)):
         raise TypeError("Internal error, expected integer for `ok`")
 
     if ok == 0:
@@ -201,12 +233,11 @@ def WriteFile(handle, data, overlapped=False):
                        be a boolean any other value that WriteFile() would
                        normally accept.
     """
-    size = len(data)
+    if not _PY3 and not isinstance(data, unicode):
+        data = unicode(data)
 
-    if isinstance(data, unicode):
-        data = ffi.new("wchar_t[%d]" % size, data)
-    else:
-        data = ffi.new("char[%d]" % size, data)
+    size = len(data)
+    data = ffi.new("wchar_t[%d]" % size, data)
 
     if not overlapped:
         overlapped = ffi.NULL
@@ -222,6 +253,17 @@ def WriteFile(handle, data, overlapped=False):
         return bytesWritten
 
     raise WindowsAPIError(code, "WriteFile", error)
+
+
+# TODO: finish documentation
+# TODO: handle wide vs. ansi function availability
+def CreateFile(handle, desiredAccess):
+    """
+    This function wraps Microsoft's CreateFile() function:
+
+        https://msdn.microsoft.com/en-us/library/windows/desktop/aa363858(v=vs.85).aspx
+    """
+    kernel32.CreateFileW(handle, )
 
 
 # TODO: parameter documentation
@@ -257,6 +299,38 @@ def PeekNamedPipe(pipe, bufferSize):
     _raiseErrorIfZero(ok, "PeekNamedPipe")
 
     return ok, lpBytesLeftThisMessage[0]
+
+
+def GetTempFileName(unique=True, filenamePrefix=tempfile.template):
+    """
+    This function wraps Microsoft's GetTempFileName() function:
+
+        https://msdn.microsoft.com/en-us/library/windows/desktop/aa364991(v=vs.85).aspx
+
+    @param unique: If True then Windows will keep generating file names until
+                   it's able to produce a unique path.
+    @param unique: C{bool}
+
+    @param filenamePrefix: The string to prefix the generated file name
+                           with.  If a value is not provided we use
+                           L{tempfile.template}
+    @type filenamePrefix: C{str,unicode}
+    """
+    # Get the temporary path
+    tempPath = ffi.new("wchar_t[%d]" % kernel32.MAX_PATH)
+    ok = kernel32.GetTempPathW(kernel32.MAX_PATH, tempPath)
+    _raiseErrorIfZero(ok, "GetTempPathW")
+
+    if not _PY3 and not isinstance(filenamePrefix, unicode):
+        filenamePrefix = unicode(filenamePrefix)
+
+    # Generate the file path
+    output = ffi.new("wchar_t[%d]" % kernel32.MAX_PATH)
+    prefix = ffi.new("wchar_t[%d]" % len(filenamePrefix), filenamePrefix)
+    ok = kernel32.GetTempFileNameW(tempPath, prefix, unique, output)
+    _raiseErrorIfZero(ok, "GetTempFileNameW")
+
+    return output
 
 
 def CloseHandle(handle):
