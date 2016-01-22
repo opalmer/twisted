@@ -1,1 +1,1 @@
-twisted.python.python.lockfile and twisted.python.win32._ErrorFormatter.fromEnvironment no longer depend on win32api from pywin32.
+twisted.python.python.lockfile and twisted.python.win32._ErrorFormatter.fromEnvironment now depend on pywincffi instead of pywin32.
