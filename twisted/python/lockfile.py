@@ -40,27 +40,25 @@ else:
     # file with the PID of the process holding the lock instead.
     # These functions below perform that unenviable, probably-fraught-with-
     # race-conditions duty. - hawkie
+    from pywincffi.core import dist
+    from pywincffi.exceptions import WindowsAPIError
+    from pywincffi.kernel32.process import OpenProcess
 
-    try:
-        from win32api import OpenProcess
-        import pywintypes
-    except ImportError:
-        kill = None
-    else:
-        ERROR_ACCESS_DENIED = 5
-        ERROR_INVALID_PARAMETER = 87
+    _ffi, _lib = dist.load()
+    ERROR_ACCESS_DENIED = _ffi.ERROR_ACCESS_DENIED
+    ERROR_INVALID_PARAMETER = _ffi.ERROR_INVALID_PARAMETER
 
-        def kill(pid, signal):
-            try:
-                OpenProcess(0, 0, pid)
-            except pywintypes.error as e:
-                if e.args[0] == ERROR_ACCESS_DENIED:
-                    return
-                elif e.args[0] == ERROR_INVALID_PARAMETER:
-                    raise OSError(errno.ESRCH, None)
-                raise
-            else:
-                raise RuntimeError("OpenProcess is required to fail.")
+    def kill(pid, signal):
+        try:
+            OpenProcess(0, False, pid)
+        except WindowsAPIError as e:
+            if e.code == _ffi.ERROR_ACCESS_DENIED:
+                return
+            elif e.code == _ffi.ERROR_INVALID_PARAMETER:
+                raise OSError(errno.ESRCH, None)
+            raise
+        else:
+            raise RuntimeError("OpenProcess is required to fail.")
 
     # For monkeypatching in tests
     _open = open
