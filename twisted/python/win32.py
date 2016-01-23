@@ -19,8 +19,6 @@ import os
 try:
     import win32api
     import win32con
-    from pywincffi.core import dist
-    _ffi, _lib = dist.load()
 except ImportError:
     pass
 
@@ -135,7 +133,12 @@ class _ErrorFormatter(object):
         except ImportError:
             WinError = None
 
-        getwinerror = lambda errorcode: _ffi.getwinerror(errorcode)[1]
+        try:
+            from pywincffi.core import dist
+            ffi, _ = dist.load()
+            getwinerror = lambda errorcode: ffi.getwinerror(errorcode)[1]
+        except ImportError:
+            getwinerror = None
 
         try:
             from socket import errorTab

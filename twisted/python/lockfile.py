@@ -46,12 +46,8 @@ else:
     def kill(pid, signal):
         """
         Internally used by C{twisted.python.lockfile.FilesystemLock} to
-        call L{os.kill} on Windows.  Functionally this will do what
-        L{os.kill} does except when C{WindowsError} is raised.
-
-        If C{WindowsError} is raised, and the Windows error number was
-        equal to ERROR_INVALID_PARAMETER, we reraise the error as
-        errno.ESRCH instead.
+        call L{os.kill} on Windows.  This will raise OSError(errno.ESRCH, None)
+        if the call to L{os.kill} failed with ERROR_INVALID_PARAMETER.
 
         @param pid: The process id to pass to L{os.kill}
         @type pid: C{int}
