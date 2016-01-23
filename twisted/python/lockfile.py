@@ -23,10 +23,10 @@ def unique():
 from os import rename
 
 if not platform.isWindows():
-    from os import kill
     from os import symlink
     from os import readlink
     from os import remove as rmlink
+    kill = os.kill
     _windows = False
 else:
     _windows = True
@@ -40,25 +40,31 @@ else:
     # file with the PID of the process holding the lock instead.
     # These functions below perform that unenviable, probably-fraught-with-
     # race-conditions duty. - hawkie
-    from pywincffi.core import dist
-    from pywincffi.exceptions import WindowsAPIError
-    from pywincffi.kernel32.process import OpenProcess
-
-    _ffi, _lib = dist.load()
-    ERROR_ACCESS_DENIED = _ffi.ERROR_ACCESS_DENIED
-    ERROR_INVALID_PARAMETER = _ffi.ERROR_INVALID_PARAMETER
+    ERROR_ACCESS_DENIED = 5
+    ERROR_INVALID_PARAMETER = 87
 
     def kill(pid, signal):
+        """
+        Internally used by C{twisted.python.lockfile.FilesystemLock} to
+        call L{os.kill} on Windows.  Functionally this will do what
+        L{os.kill} does except when C{WindowsError} is raised.
+
+        If C{WindowsError} is raised, and the Windows error number was
+        equal to ERROR_INVALID_PARAMETER, we reraise the error as
+        errno.ESRCH instead.
+
+        @param pid: The process id to pass to L{os.kill}
+        @type pid: C{int}
+
+        @param signal: The signal to pass to L{os.kill}
+        @type signal: C{int}
+        """
         try:
-            OpenProcess(0, False, pid)
-        except WindowsAPIError as e:
-            if e.code == _ffi.ERROR_ACCESS_DENIED:
-                return
-            elif e.code == _ffi.ERROR_INVALID_PARAMETER:
+            os.kill(pid, signal)
+        except WindowsError as error:
+            if error.winerror == ERROR_INVALID_PARAMETER:
                 raise OSError(errno.ESRCH, None)
             raise
-        else:
-            raise RuntimeError("OpenProcess is required to fail.")
 
     # For monkeypatching in tests
     _open = open
@@ -179,8 +185,7 @@ class FilesystemLock(object):
                             return False
                         raise
                     try:
-                        if kill is not None:
-                            kill(int(pid), 0)
+                        kill(int(pid), 0)
                     except OSError as e:
                         if e.errno == errno.ESRCH:
                             # The owner has vanished, try to claim it in the
