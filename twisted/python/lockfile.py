@@ -14,8 +14,11 @@ import os
 
 from time import time as _uniquefloat
 
-from twisted.python.runtime import platform
 from twisted.python.compat import _PY3
+from twisted.python.deprecate import deprecated
+from twisted.python.runtime import platform
+from twisted.python.versions import Version
+
 
 def unique():
     return str(int(_uniquefloat() * 1000))
@@ -26,7 +29,22 @@ if not platform.isWindows():
     from os import symlink
     from os import readlink
     from os import remove as rmlink
-    kill = os.kill
+
+    _kill = os.kill
+
+    @deprecated(Version("Twisted", 15, 6, 0), replacement="os.kill")
+    def kill(pid, signal):
+        """
+        Passes arguments to L{os.kill} for backwards compatibility.
+
+        @param pid: The process id to pass to L{os.kill}
+        @type pid: C{int}
+
+        @param signal: The signal to pass to L{os.kill}
+        @type signal: C{int}
+        """
+        _kill(pid, signal)
+
     _windows = False
 else:
     _windows = True
@@ -43,7 +61,7 @@ else:
     ERROR_ACCESS_DENIED = 5
     ERROR_INVALID_PARAMETER = 87
 
-    def kill(pid, signal):
+    def _kill(pid, signal):
         """
         Internally used by C{twisted.python.lockfile.FilesystemLock} to
         call L{os.kill} on Windows.  This will raise OSError(errno.ESRCH, None)
@@ -64,6 +82,20 @@ else:
             elif error.winerror == ERROR_INVALID_PARAMETER:
                 raise OSError(errno.ESRCH, None)
             raise
+
+    @deprecated(Version("Twisted", 15, 6, 0), replacement="os.kill")
+    def kill(pid, signal):
+        """
+        Passes arguments to a private function used by
+        C{twisted.python.lockfile.FilesystemLock} for backwards compatibility.
+
+        @param pid: The process id to pass to the private function
+        @type pid: C{int}
+
+        @param signal: The signal to pass to the private function.
+        @type signal: C{int}
+        """
+        _kill(pid, signal)
 
     # For monkeypatching in tests
     _open = open
@@ -184,7 +216,7 @@ class FilesystemLock(object):
                             return False
                         raise
                     try:
-                        kill(int(pid), 0)
+                        _kill(int(pid), 0)
                     except OSError as e:
                         if e.errno == errno.ESRCH:
                             # The owner has vanished, try to claim it in the
