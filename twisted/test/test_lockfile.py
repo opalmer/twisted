@@ -6,11 +6,16 @@
 Tests for L{twisted.python.lockfile}.
 """
 
-from __future__ import absolute_import, division
+from __future__ import absolute_import, division, print_function
 
 import errno
 import os
+import sys
 
+from twisted.internet import reactor
+from twisted.internet.protocol import ProcessProtocol
+from twisted.internet.defer import Deferred, inlineCallbacks
+from twisted.internet.error import ProcessDone
 from twisted.trial import unittest
 from twisted.python import lockfile
 from twisted.python.runtime import platform
@@ -508,3 +513,100 @@ class LockingTests(unittest.TestCase):
         self.assertTrue(lockfile.isLocked(lockf))
         lock.unlock()
         self.assertFalse(lockfile.isLocked(lockf))
+
+
+class PythonProcessProtocol(ProcessProtocol):
+    def __init__(self):
+        self.pid = None
+        self.success = None
+        self.finished = Deferred()
+        self.wrote_lock = Deferred()
+
+    def connectionMade(self):
+        self.pid = self.transport.pid
+
+    def processEnded(self, reason):
+        if self.success is not None:
+            self.success = isinstance(reason.value, ProcessDone) and \
+                           reason.value.status == 0
+
+        if self.success:
+            self.finished.callback(True)
+        else:
+            self.finished.errback(reactor)
+
+    def outReceived(self, data):
+        if "WROTE LOCK" in data:
+            self.wrote_lock.callback(True)
+
+    def errReceived(self, data):
+        self.success = False
+
+
+
+class FunctionalLockingTests(unittest.TestCase):
+    @inlineCallbacks
+    def test_lockBlocksUntilOtherProcessExits(self):
+        """
+        L{FilesystemLock.lock} should block so long as the lock
+        file exists.
+        """
+        script = self.mktemp()
+        lockf = self.mktemp()
+        lock = lockfile.FilesystemLock(lockf)
+
+        with open(script, "w") as scriptFile:
+            print("from __future__ import print_function", file=scriptFile)
+            print("import os", file=scriptFile)
+            print("import time", file=scriptFile)
+            print("with open(%r, 'w') as lockFile:" % lockf, file=scriptFile)
+            print("    lockFile.write(str(os.getpid()))", file=scriptFile)
+            print("print('WROTE LOCK')", file=scriptFile)
+            print("time.sleep(2)", file=scriptFile)
+            print("os.remove(%r)" % lockf, file=scriptFile)
+            print("time.sleep(2)", file=scriptFile)
+
+        protocol = PythonProcessProtocol()
+        reactor.spawnProcess(
+            protocol, sys.executable, [sys.executable, script])
+
+        yield protocol.wrote_lock
+
+        self.assertTrue(lock.lock())
+
+        # Wait for the spawned process to terminate and make
+        # sure it terminated successfully.
+        yield protocol.finished
+
+        # The child process should have exited successfully.  Without this
+        # it's possible we could get a false-positive test result by
+        # accident.
+        self.assertTrue(protocol.success)
+
+    @inlineCallbacks
+    def test_lockDoesNotBlockForNonExistentProcess(self):
+        """
+        L{FilesystemLock.lock} should not block if the process
+        which is indicated in the lock file does not exist.
+        """
+        script = self.mktemp()
+        lockf = self.mktemp()
+        lock = lockfile.FilesystemLock(lockf)
+
+        with open(script, "w") as scriptFile:
+            print("from __future__ import print_function", file=scriptFile)
+            print("import os", file=scriptFile)
+            print("with open(%r, 'w') as lockFile:" % lockf, file=scriptFile)
+            print("    lockFile.write(str(os.getpid()))", file=scriptFile)
+            print("print('WROTE LOCK')", file=scriptFile)
+
+        protocol = PythonProcessProtocol()
+        reactor.spawnProcess(
+            protocol, sys.executable, [sys.executable, script])
+
+        yield protocol.wrote_lock
+        yield protocol.finished
+        self.assertTrue(protocol.success)
+
+        self.assertTrue(lock.lock())
+
