@@ -90,6 +90,72 @@ class UtilTests(unittest.TestCase):
         """
         lockfile.kill(os.getpid(), 0)
 
+    def test_killERROR_ACCESS_DENIEDWindows(self):
+        """
+        L{lockfile.kill} returns without error if ERROR_ACCESS_DENIED is
+        raised by Windows.
+        """
+        def fakeKill(pid, signal):
+            raise WindowsError(lockfile.ERROR_ACCESS_DENIED, None)
+
+        self.patch(os, 'kill', fakeKill)
+        lockfile.kill(0, 0)
+
+    if not platform.isWindows():
+        test_killERROR_ACCESS_DENIEDWindows.skip = (
+            "special ERROR_ACCESS_DENIED handling in kill() only necessary on "
+            "on Windows.")
+
+    def test_killERROR_INVALID_PARAMETERWindows(self):
+        """
+        L{lockfile.kill} reraises as OSError(ESRCH) if ERROR_INVALID_PARAMETER
+        is raised by Windows.
+        """
+        def fakeKill(pid, signal):
+            raise WindowsError(lockfile.ERROR_INVALID_PARAMETER, None)
+
+        self.patch(os, 'kill', fakeKill)
+
+        exc = self.assertRaises(OSError, lockfile.kill, 0, 0)
+        self.assertEqual(exc.errno, errno.ESRCH)
+
+    if not platform.isWindows():
+        test_killERROR_INVALID_PARAMETERWindows.skip = (
+            "special ERROR_INVALID_PARAMETER handling in kill() only necessary "
+            "on Windows.")
+
+    def test_killOtherWindowsErrorReraisedOnWindows(self):
+        """
+        L{lockfile.kill} reraises any unhandled WindowsError on Windows.
+        """
+        def fakeKill(pid, signal):
+            raise WindowsError(123, errno.EINVAL)
+
+        self.patch(os, 'kill', fakeKill)
+        exc = self.assertRaises(WindowsError, lockfile.kill, 0, 0)
+        self.assertEqual(exc.winerror, 123)
+        self.assertEqual(exc.errno, errno.EINVAL)
+
+    if not platform.isWindows():
+        test_killOtherWindowsErrorReraisedOnWindows.skip = (
+            "special handling in kill() for other WindowsError only necessary "
+            "on Windows.")
+
+    def test_killOtherErrorReraisedOnWindows(self):
+        """
+        L{lockfile.kill} reraises any other unhandled exception on Windows.
+        """
+        def fakeKill(pid, signal):
+            raise IOError(123)
+
+        self.patch(os, 'kill', fakeKill)
+        exc = self.assertRaises(IOError, lockfile.kill, 0, 0)
+        self.assertEqual(exc.args, (123, ))
+
+    if not platform.isWindows():
+        test_killOtherErrorReraisedOnWindows.skip = (
+            "special handling in kill() for other WindowsError only necessary "
+            "on Windows.")
 
     def test_killESRCH(self):
         """
