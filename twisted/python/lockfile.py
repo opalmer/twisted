@@ -30,8 +30,6 @@ if not platform.isWindows():
     from os import readlink
     from os import remove as rmlink
 
-    _kill = os.kill
-
     @deprecated(Version("Twisted", 15, 6, 0), replacement="os.kill")
     def kill(pid, signal):
         """
@@ -43,10 +41,12 @@ if not platform.isWindows():
         @param signal: The signal to pass to L{os.kill}
         @type signal: C{int}
         """
-        _kill(pid, signal)
+        os.kill(pid, signal)
 
     _windows = False
 else:
+    from pywincffi.kernel32 import pid_exists
+
     _windows = True
 
     # On UNIX, a symlink can be made to a nonexistent location, and
@@ -61,17 +61,16 @@ else:
     ERROR_ACCESS_DENIED = 5
     ERROR_INVALID_PARAMETER = 87
 
-    def _kill(pid, signal):
+    @deprecated(Version("Twisted", 15, 6, 0), replacement="os.kill")
+    def kill(pid, signal):
         """
-        Internally used by C{twisted.python.lockfile.FilesystemLock} to
-        call L{os.kill} on Windows.  This will raise OSError(errno.ESRCH, None)
-        if the call to L{os.kill} failed with ERROR_INVALID_PARAMETER and
-        return None if access is denied to the target process.
+        Passes arguments to C{os.kill} and raises OSError(errno.ESRCH, None)
+        if Windows responds with ERROR_INVALID_PARAMETER.
 
-        @param pid: The process id to pass to L{os.kill}
+        @param pid: The process id to pass to the private function
         @type pid: C{int}
 
-        @param signal: The signal to pass to L{os.kill}
+        @param signal: The signal to pass to the private function.
         @type signal: C{int}
         """
         try:
@@ -82,20 +81,6 @@ else:
             elif error.winerror == ERROR_INVALID_PARAMETER:
                 raise OSError(errno.ESRCH, None)
             raise
-
-    @deprecated(Version("Twisted", 15, 6, 0), replacement="os.kill")
-    def kill(pid, signal):
-        """
-        Passes arguments to a private function used by
-        C{twisted.python.lockfile.FilesystemLock} for backwards compatibility.
-
-        @param pid: The process id to pass to the private function
-        @type pid: C{int}
-
-        @param signal: The signal to pass to the private function.
-        @type signal: C{int}
-        """
-        _kill(pid, signal)
 
     # For monkeypatching in tests
     _open = open
@@ -199,6 +184,7 @@ class FilesystemLock(object):
                     # on Windows where lock removal isn't atomic.  Give up, we
                     # don't know how long this is going to take.
                     return False
+
                 if e.errno == errno.EEXIST:
                     try:
                         pid = readlink(self.name)
@@ -215,8 +201,15 @@ class FilesystemLock(object):
                             # take.
                             return False
                         raise
+
+                    pid = int(pid)
                     try:
-                        _kill(int(pid), 0)
+                        if not _windows:
+                            os.kill(pid, 0)
+
+                        if not pid_exists(pid):
+                            raise OSError(errno.ESRCH, None)
+
                     except OSError as e:
                         if e.errno == errno.ESRCH:
                             # The owner has vanished, try to claim it in the
