@@ -61,7 +61,7 @@ else:
     ERROR_ACCESS_DENIED = 5
     ERROR_INVALID_PARAMETER = 87
 
-    @deprecated(Version("Twisted", 15, 6, 0), replacement="os.kill")
+    @deprecated(Version("Twisted", 15, 6, 0))
     def kill(pid, signal):
         """
         Passes arguments to C{os.kill} and raises OSError(errno.ESRCH, None)
