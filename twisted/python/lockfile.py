@@ -11,19 +11,20 @@ from __future__ import absolute_import, division
 
 import errno
 import os
+import tempfile
+from errno import ENOENT
+from os.path import dirname
 
 from time import time as _uniquefloat
 
 from twisted.python.compat import _PY3
-from twisted.python.deprecate import deprecated
+from twisted.python.deprecate import deprecated, deprecatedModuleAttribute
 from twisted.python.runtime import platform
 from twisted.python.versions import Version
 
 
 def unique():
     return str(int(_uniquefloat() * 1000))
-
-from os import rename
 
 if not platform.isWindows():
     from os import symlink
@@ -45,7 +46,8 @@ if not platform.isWindows():
 
     _windows = False
 else:
-    from pywincffi.kernel32 import pid_exists
+    from os import rename
+    from pywincffi.kernel32 import MoveFileEx, pid_exists
 
     _windows = True
 
@@ -53,13 +55,38 @@ else:
     # FilesystemLock uses this by making the target of the symlink an
     # imaginary, non-existing file named that of the PID of the process with
     # the lock. This has some benefits on UNIX -- making and removing this
-    # symlink is atomic. However, because Windows doesn't support symlinks (at
-    # least as how we know them), we have to fake this and actually write a
-    # file with the PID of the process holding the lock instead.
-    # These functions below perform that unenviable, probably-fraught-with-
-    # race-conditions duty. - hawkie
+    # symlink is atomic. - hawkie
+    # On Windows, there's no such thing as a symlink and atomic renames appear
+    # to be possible so long as you're using an NTFS file system and not
+    # performing the rename across volumes.  Several projects including
+    # Python (os.replace in Python 3.3), Go (os.Rename) and cygwin (mv)
+    # have implemented this on top of MoveFileEx which a developer from
+    # Microsoft claims is atomic (see: "FAQ: Is MoveFileEx atomic"):
+    #   https://msdn.microsoft.com/en-us/library/aa365240
+    # Other suggested methods of implementing atomic renames include
+    # NtSetInformationFile or using transactions however these methods either
+    # only support Vista and up or are unsupported and may be removed at a
+    # later date.  So long story short, we MoveFileEx to rename the file so
+    # we're given the best chance having an atomic rename occur. - opalmer
+    #
+
     ERROR_ACCESS_DENIED = 5
     ERROR_INVALID_PARAMETER = 87
+
+    deprecatedModuleAttribute(
+        Version("Twisted", 15, 6, 0),
+        "Use of ERROR_ACCESS_DENIED from twisted.python.lockfile "
+        "is deprecated",
+        "twisted.python.lockfile",
+        "ERROR_ACCESS_DENIED"
+    )
+    deprecatedModuleAttribute(
+        Version("Twisted", 15, 6, 0),
+        "Use of ERROR_INVALID_PARAMETER from twisted.python.lockfile "
+        "is deprecated",
+        "twisted.python.lockfile",
+        "ERROR_INVALID_PARAMETER"
+    )
 
     @deprecated(Version("Twisted", 15, 6, 0))
     def kill(pid, signal):
@@ -73,19 +100,21 @@ else:
         @param signal: The signal to pass to the private function.
         @type signal: C{int}
         """
+        error_access_denied = 5
+        error_invalid_parameter = 87
         try:
             os.kill(pid, signal)
         except WindowsError as error:
-            if error.winerror == ERROR_ACCESS_DENIED:
+            if error.winerror == error_access_denied:
                 return
-            elif error.winerror == ERROR_INVALID_PARAMETER:
+            elif error.winerror == error_invalid_parameter:
                 raise OSError(errno.ESRCH, None)
             raise
 
     # For monkeypatching in tests
     _open = open
 
-
+    @deprecated(Version("Twisted", 15, 6, 0))
     def symlink(value, filename):
         """
         Write a file at C{filename} with the contents of C{value}. See the
@@ -114,24 +143,22 @@ else:
             os.rmdir(newlinkname)
             raise
 
-
+    @deprecated(Version("Twisted", 15, 6, 0))
     def readlink(filename):
         """
         Read the contents of C{filename}. See the above comment block as to why
         this is needed.
         """
+        filename = os.path.join(filename, "symlink")
         try:
-            fObj = _open(os.path.join(filename, 'symlink'), 'r')
+            with open(filename, "r") as file_:
+                return file_.read()
         except IOError as e:
             if e.errno == errno.ENOENT or e.errno == errno.EIO:
                 raise OSError(e.errno, None)
             raise
-        else:
-            result = fObj.read()
-            fObj.close()
-            return result
 
-
+    @deprecated(Version("Twisted", 15, 6, 0))
     def rmlink(filename):
         os.remove(os.path.join(filename, 'symlink'))
         os.rmdir(filename)
@@ -164,56 +191,77 @@ class FilesystemLock(object):
         self.name = name
 
 
-    def lock(self):
+    def _lockWindows(self):
         """
-        Acquire this lock.
+        Called by C{lock} when running on Windows.
+        """
+        # Try to open the file defined by self.name.  If it exists,
+        # extract the pid.
+        try:
+            with open(self.name, "r") as file_:
+                pid = file_.read()
 
-        @rtype: C{bool}
-        @return: True if the lock is acquired, false otherwise.
+        except IOError as error:
+            if error.errno != ENOENT:
+                raise
 
-        @raise: Any exception os.symlink() may raise, other than
-        EEXIST.
+            # The pid file does not currently exist
+            fd, tempPidPath = tempfile.mkstemp()
+
+            with os.fdopen(fd, "w") as pidFile:
+                pidFile.write(str(os.getpid()))
+                pidFile.flush()
+                os.fsync(pidFile.fileno())
+
+            os.makedirs(dirname(self.name))
+            MoveFileEx(tempPidPath, self.name)
+            self.clean = True
+            self.locked = True
+            return True
+
+        # File we're using for the lock exists.
+        else:
+            if pid_exists(int(pid)):
+                return False
+
+            # Pid in the file no longer exists so it's
+            # ours to take.
+            fd, tempPidPath = tempfile.mkstemp()
+
+            with os.fdopen(fd, "w") as pidFile:
+                pidFile.write(str(os.getpid()))
+                pidFile.flush()
+                os.fsync(pidFile.fileno())
+
+            self.clean = True
+            self.locked = True
+            return True
+
+
+    def _lockPosix(self):
+        """
+        Called by C{lock} when running on POSIX based platforms.
         """
         clean = True
         while True:
             try:
                 symlink(str(os.getpid()), self.name)
             except OSError as e:
-                if _windows and e.errno in (errno.EACCES, errno.EIO):
-                    # The lock is in the middle of being deleted because we're
-                    # on Windows where lock removal isn't atomic.  Give up, we
-                    # don't know how long this is going to take.
-                    return False
-
                 if e.errno == errno.EEXIST:
                     try:
                         pid = readlink(self.name)
                     except (IOError, OSError) as e:
                         if e.errno == errno.ENOENT:
-                            # The lock has vanished, try to claim it in the
-                            # next iteration through the loop.
+                            # The lock has vanished, try to claim it in
+                            # the next iteration through the loop.
                             continue
-                        elif _windows and e.errno == errno.EACCES:
-                            # The lock is in the middle of being
-                            # deleted because we're on Windows where
-                            # lock removal isn't atomic.  Give up, we
-                            # don't know how long this is going to
-                            # take.
-                            return False
                         raise
-
-                    pid = int(pid)
                     try:
-                        if not _windows:
-                            os.kill(pid, 0)
-
-                        if not pid_exists(pid):
-                            raise OSError(errno.ESRCH, None)
-
+                        os.kill(int(pid), 0)
                     except OSError as e:
                         if e.errno == errno.ESRCH:
-                            # The owner has vanished, try to claim it in the
-                            # next iteration through the loop.
+                            # The owner has vanished, try to claim it in
+                            # the next iteration through the loop.
                             try:
                                 rmlink(self.name)
                             except OSError as e:
@@ -231,6 +279,24 @@ class FilesystemLock(object):
             self.locked = True
             self.clean = clean
             return True
+
+
+    def lock(self):
+        """
+        Acquire this lock.
+
+        @rtype: C{bool}
+        @return: True if the lock is acquired, false otherwise.
+
+        @raise: Any exception os.symlink() may raise, other than
+        EEXIST.
+        """
+        # Windows mostly does not support atomic file
+        # operations.
+        if _windows:
+            return self._lockWindows()
+        else:
+            return self._lockWindows()
 
 
     def unlock(self):
