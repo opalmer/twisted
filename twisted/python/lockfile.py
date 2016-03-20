@@ -11,8 +11,7 @@ from __future__ import absolute_import, division
 
 import errno
 import os
-import tempfile
-from errno import ENOENT
+from errno import ENOENT, EEXIST
 from os.path import dirname
 
 from time import time as _uniquefloat
@@ -47,7 +46,10 @@ if not platform.isWindows():
     _windows = False
 else:
     from os import rename
-    from pywincffi.kernel32 import MoveFileEx, pid_exists
+    from pywincffi.core import dist
+    from pywincffi.exceptions import WindowsAPIError
+    from pywincffi.kernel32 import (
+        CloseHandle, CreateFile, WriteFile, FlushFileBuffers, pid_exists)
 
     _windows = True
 
@@ -189,53 +191,7 @@ class FilesystemLock(object):
 
     def __init__(self, name):
         self.name = name
-
-
-    def _lockWindows(self):
-        """
-        Called by C{lock} when running on Windows.
-        """
-        # Try to open the file defined by self.name.  If it exists,
-        # extract the pid.
-        try:
-            with open(self.name, "r") as file_:
-                pid = file_.read()
-
-        except IOError as error:
-            if error.errno != ENOENT:
-                raise
-
-            # The pid file does not currently exist
-            fd, tempPidPath = tempfile.mkstemp()
-
-            with os.fdopen(fd, "w") as pidFile:
-                pidFile.write(str(os.getpid()))
-                pidFile.flush()
-                os.fsync(pidFile.fileno())
-
-            os.makedirs(dirname(self.name))
-            MoveFileEx(tempPidPath, self.name)
-            self.clean = True
-            self.locked = True
-            return True
-
-        # File we're using for the lock exists.
-        else:
-            if pid_exists(int(pid)):
-                return False
-
-            # Pid in the file no longer exists so it's
-            # ours to take.
-            fd, tempPidPath = tempfile.mkstemp()
-
-            with os.fdopen(fd, "w") as pidFile:
-                pidFile.write(str(os.getpid()))
-                pidFile.flush()
-                os.fsync(pidFile.fileno())
-
-            self.clean = True
-            self.locked = True
-            return True
+        self._hFile = None
 
 
     def _lockPosix(self):
@@ -280,6 +236,119 @@ class FilesystemLock(object):
             self.clean = clean
             return True
 
+    def _windowsWriteLockFile(self):
+        """
+        Called by C{lockWindows} to write the lock file to disk.  This uses
+        the Windows API functions CreateFile and WriteFile to create the file
+        and write the current pid to disk.  The call to CreateFile() will
+        open the file in such a way that other process may read from the file
+        but they will be unable to write to the file.
+        """
+        try:
+            os.makedirs(dirname(self.name))
+        except (OSError, IOError, WindowsError) as error:
+            if error.errno != EEXIST:
+                raise
+
+        _, library = dist.load()
+        try:
+            self._hFile = CreateFile(
+                self.name,
+                library.GENERIC_WRITE,
+
+                # Other processes can read from the file but won't
+                # be able to move or write to it.
+                library.FILE_SHARE_READ
+            )
+            pid = str(os.getpid())
+            if _PY3:
+                pid = pid.encode("utf-8")
+
+            WriteFile(self._hFile, pid, lpBufferType="char[]")
+            FlushFileBuffers(self._hFile)
+
+        # If one of the Window's APIs raise an exception we need to
+        # be sure we discard the handle.
+        except WindowsAPIError:
+            if self._hFile is not None:
+                try:
+                    CloseHandle(self._hFile)
+                except WindowsAPIError:
+                    pass
+
+            self._hFile = None
+            raise
+
+    def _lockWindows(self):
+        """
+        Called by C{lock} when running on Windows.
+        """
+        if self._hFile:  # already locked by this instance
+            return self.locked
+
+        try:
+            with open(self.name, "r") as file_:
+                pid = int(file_.read().rstrip("\x00"))
+        except (OSError, IOError, WindowsError) as error:
+            if error.errno == ENOENT:
+                self._windowsWriteLockFile()
+                self.locked = True
+                self.clean = True
+                return self.locked
+            raise
+        else:
+            if not pid_exists(pid):
+                self.clean = False
+
+            self._windowsWriteLockFile()
+            self.locked = True
+            return self.locked
+
+
+    def _unlockPosix(self):
+        """
+        Release the lock on POSIX, called by C{unlock} on POSIX systems.
+        """
+        pid = readlink(self.name)
+        if int(pid) != os.getpid():
+            raise ValueError("Lock %r not owned by this process" % self.name)
+        rmlink(self.name)
+        self.locked = False
+
+
+    def _unlockWindows(self):
+        """
+        Release the lock on Windows if we own it, called by C{unlock}.
+        """
+        # If this class instance has a handle for the file
+        if self._hFile:
+            CloseHandle(self._hFile)
+            os.remove(self.name)
+            self._hFile = None
+            return
+
+        try:
+            with open(self.name, "r") as file_:
+                existing_pid = int(file_.read().rstrip("\x00"))
+        except (OSError, IOError, WindowsError) as error:
+            # Nothing to do if the file does not exist.  It could have
+            # been removed in another process or it might have never
+            # existed.
+            if error.errno == ENOENT:
+                return
+            raise
+
+        if existing_pid == os.getpid():
+            return
+
+        if pid_exists(existing_pid):
+            raise ValueError(
+                "Lock %r not owned by this process" % self.name)
+
+        os.remove(self.name)
+        self.clean = None
+        self.locked = None
+
 
     def lock(self):
         """
@@ -291,10 +360,8 @@ class FilesystemLock(object):
         @raise: Any exception os.symlink() may raise, other than
         EEXIST.
         """
-        # Windows mostly does not support atomic file
-        # operations.
-        if _windows:
-            return self._lockWindows()
+        if not _windows:
+            return self._lockPosix()
         else:
             return self._lockWindows()
 
@@ -303,18 +370,13 @@ class FilesystemLock(object):
         """
         Release this lock.
 
-        This deletes the directory with the given name.
-
         @raise: Any exception os.readlink() may raise, or
         ValueError if the lock is not owned by this process.
         """
-        pid = readlink(self.name)
-        if int(pid) != os.getpid():
-            raise ValueError(
-                "Lock %r not owned by this process" % (self.name,))
-        rmlink(self.name)
-        self.locked = False
-
+        if not _windows:
+            self._unlockPosix()
+        else:
+            self._unlockWindows()
 
 
 def isLocked(name):
