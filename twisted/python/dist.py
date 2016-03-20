@@ -78,7 +78,7 @@ _EXTRA_OPTIONS = dict(
     soap=['soappy'],
     serial=['pyserial'],
     osx=['pyobjc'],
-    windows=['pypiwin32', 'pywincffi >= 0.1.2']
+    windows=['pypiwin32', 'pywincffi >= 0.2.0']
 )
 
 _PLATFORM_INDEPENDENT = (
