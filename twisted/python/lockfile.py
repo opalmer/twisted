@@ -238,11 +238,15 @@ class FilesystemLock(object):
 
     def _windowsWriteLockFile(self):
         """
-        Called by C{lockWindows} to write the lock file to disk.  This uses
-        the Windows API functions CreateFile and WriteFile to create the file
-        and write the current pid to disk.  The call to CreateFile() will
-        open the file in such a way that other process may read from the file
-        but they will be unable to write to the file.
+        Called by C{lockWindows} to write a file to disk containing the
+        current process id using the CreateFile, WriteFile and
+        FlushFileBuffers Windows API calls.  This method will:
+
+            * Create any parent directories for the lock file
+            * Create the file using GENERIC_WRITE and FILE_SHARE_READ
+              permissions (so other processes cannot write to the file).
+            * Write the current pid to the file.
+            * Flush the changes to disk.
         """
         try:
             os.makedirs(dirname(self.name))
