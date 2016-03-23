@@ -13,9 +13,8 @@ import os
 import subprocess
 import sys
 
-from twisted.internet import reactor
-from twisted.internet.defer import inlineCallbacks
 from twisted.trial import unittest
+from twisted.trial._synctest import SkipTest
 from twisted.python import lockfile
 from twisted.python.runtime import platform
 
@@ -66,56 +65,34 @@ class UtilTests(unittest.TestCase):
         self.assertEqual(exc.errno, errno.ENOENT)
 
 
-    def test_readlinkEACCESWindows(self):
+    def testkill(self):
         """
-        L{lockfile.readlink} raises L{OSError} with C{errno} set to L{EACCES}
-        on Windows when the underlying file open attempt fails with C{EACCES}.
-
-        Opening a file on Windows may fail if the path is inside a directory
-        which is in the process of being deleted (directory deletion appears
-        not to be atomic).
-        """
-        name = self.mktemp()
-        def fakeOpen(path, mode):
-            raise IOError(errno.EACCES, None)
-        self.patch(lockfile, '_open', fakeOpen)
-        exc = self.assertRaises(IOError, lockfile.readlink, name)
-        self.assertEqual(exc.errno, errno.EACCES)
-
-    if not platform.isWindows():
-        test_readlinkEACCESWindows.skip = (
-            "special readlink EACCES handling only necessary and correct on "
-            "Windows.")
-
-
-    def test_kill(self):
-        """
-        L{lockfile._kill} returns without error if passed the PID of a
+        L{lockfile.kill} returns without error if passed the PID of a
         process which exists and signal C{0}.
         """
-        lockfile._kill(os.getpid(), 0)
+        lockfile.kill(os.getpid(), 0)
 
 
-    def test_killERROR_ACCESS_DENIEDWindows(self):
+    def testkillERROR_ACCESS_DENIEDWindows(self):
         """
-        L{lockfile._kill} returns without error if ERROR_ACCESS_DENIED is
+        L{lockfile.kill} returns without error if ERROR_ACCESS_DENIED is
         raised by Windows.
         """
         def fakeKill(pid, signal):
             raise WindowsError(lockfile.ERROR_ACCESS_DENIED, None)
 
         self.patch(os, 'kill', fakeKill)
-        lockfile._kill(0, 0)
+        lockfile.kill(0, 0)
 
     if not platform.isWindows():
-        test_killERROR_ACCESS_DENIEDWindows.skip = (
+        testkillERROR_ACCESS_DENIEDWindows.skip = (
             "special ERROR_ACCESS_DENIED handling in kill() only necessary on "
             "on Windows.")
 
 
-    def test_killERROR_INVALID_PARAMETERWindows(self):
+    def testkillERROR_INVALID_PARAMETERWindows(self):
         """
-        L{lockfile._kill} reraises as OSError(ESRCH) if
+        L{lockfile.kill} reraises as OSError(ESRCH) if
         ERROR_INVALID_PARAMETER is raised by Windows.
         """
         def fakeKill(pid, signal):
@@ -123,74 +100,78 @@ class UtilTests(unittest.TestCase):
 
         self.patch(os, 'kill', fakeKill)
 
-        exc = self.assertRaises(OSError, lockfile._kill, 0, 0)
+        exc = self.assertRaises(OSError, lockfile.kill, 0, 0)
         self.assertEqual(exc.errno, errno.ESRCH)
 
     if not platform.isWindows():
-        test_killERROR_INVALID_PARAMETERWindows.skip = (
+        testkillERROR_INVALID_PARAMETERWindows.skip = (
             "special ERROR_INVALID_PARAMETER handling in kill() only "
             "necessary on Windows.")
 
 
-    def test_killOtherWindowsErrorReraisedOnWindows(self):
+    def testkillOtherWindowsErrorReraisedOnWindows(self):
         """
-        L{lockfile._kill} reraises any unhandled WindowsError on Windows.
+        L{lockfile.kill} reraises any unhandled WindowsError on Windows.
         """
         def fakeKill(pid, signal):
             raise WindowsError(123, errno.EINVAL)
 
         self.patch(os, 'kill', fakeKill)
-        exc = self.assertRaises(WindowsError, lockfile._kill, 0, 0)
+        exc = self.assertRaises(WindowsError, lockfile.kill, 0, 0)
         self.assertEqual(exc.winerror, 123)
         self.assertEqual(exc.errno, errno.EINVAL)
 
     if not platform.isWindows():
-        test_killOtherWindowsErrorReraisedOnWindows.skip = (
+        testkillOtherWindowsErrorReraisedOnWindows.skip = (
             "special handling in kill() for other WindowsError only necessary "
             "on Windows.")
 
 
-    def test_killOtherErrorReraisedOnWindows(self):
+    def testkillOtherErrorReraisedOnWindows(self):
         """
-        L{lockfile._kill} reraises any other unhandled exception on Windows.
+        L{lockfile.kill} reraises any other unhandled exception on Windows.
         """
         def fakeKill(pid, signal):
             raise IOError(123)
 
         self.patch(os, 'kill', fakeKill)
-        exc = self.assertRaises(IOError, lockfile._kill, 0, 0)
+        exc = self.assertRaises(IOError, lockfile.kill, 0, 0)
         self.assertEqual(exc.args, (123, ))
 
     if not platform.isWindows():
-        test_killOtherErrorReraisedOnWindows.skip = (
+        testkillOtherErrorReraisedOnWindows.skip = (
             "special handling in kill() for other WindowsError only necessary "
             "on Windows.")
 
 
-    def test_killESRCH(self):
+    def testkillESRCH(self):
         """
-        L{lockfile._kill} raises L{OSError} with errno of L{ESRCH} if
+        L{lockfile.kill} raises L{OSError} with errno of L{ESRCH} if
         passed a PID which does not correspond to any process.
         """
         # Hopefully there is no process with PID 2 ** 31 - 1
-        exc = self.assertRaises(OSError, lockfile._kill, 2 ** 31 - 1, 0)
+        exc = self.assertRaises(OSError, lockfile.kill, 2 ** 31 - 1, 0)
         self.assertEqual(exc.errno, errno.ESRCH)
 
 
     def test_deprecatedKillCallsPrivateFunction(self):
         """
         The deprecated function L{lockfile.kill} should be calling
-        the internal private L{twisted.python.lockfile._kill} function.
+        the internal private L{twisted.python.lockfile.kill} function.
         """
         def mockedPrivateKill(pid, signal):
             raise ValueError
 
-        self.patch(lockfile, "_kill", mockedPrivateKill)
+        self.patch(lockfile, "kill", mockedPrivateKill)
         self.assertRaises(ValueError, lockfile.kill, 0, 0)
 
 
 
-class LockingTests(unittest.TestCase):
+class LockingTestsPosix(unittest.TestCase):
+    def setUp(self):
+        if platform.isWindows():
+            raise SkipTest("These lock tests don't run on Windows")
+
     def _symlinkErrorTest(self, errno):
         def fakeSymlink(source, dest):
             raise OSError(errno, None)
@@ -220,6 +201,7 @@ class LockingTests(unittest.TestCase):
         """
         self._symlinkErrorTest(errno.EACCES)
         self._symlinkErrorTest(errno.EIO)
+
     if platform.isWindows():
         test_symlinkErrorPOSIX.skip = (
             "POSIX-specific error propagation not expected on Windows.")
@@ -431,7 +413,7 @@ class LockingTests(unittest.TestCase):
                 raise OSError(errno.EPERM, None)
             if pid == 43125:
                 raise OSError(errno.ESRCH, None)
-        self.patch(lockfile, '_kill', fakeKill)
+        self.patch(lockfile, 'kill', fakeKill)
 
         lockf = self.mktemp()
         lock = lockfile.FilesystemLock(lockf)
@@ -455,7 +437,7 @@ class LockingTests(unittest.TestCase):
                 raise OSError(errno.EPERM, None)
             if pid == 43125:
                 raise OSError(errno.ESRCH, None)
-        self.patch(lockfile, '_kill', fakeKill)
+        self.patch(lockfile, 'kill', fakeKill)
 
         lockf = self.mktemp()
 
@@ -468,7 +450,7 @@ class LockingTests(unittest.TestCase):
         self.assertFalse(lock.locked)
 
 
-    def test_killError(self):
+    def testkillError(self):
         """
         If L{kill} raises an exception other than L{OSError} with errno set to
         C{ESRCH}, the exception is passed up to the caller of
@@ -476,7 +458,7 @@ class LockingTests(unittest.TestCase):
         """
         def fakeKill(pid, signal):
             raise OSError(errno.EPERM, None)
-        self.patch(lockfile, '_kill', fakeKill)
+        self.patch(lockfile, 'kill', fakeKill)
 
         lockf = self.mktemp()
 
