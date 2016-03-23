@@ -329,9 +329,16 @@ class FilesystemLock(object):
 
     def _unlockWindows(self):
         """
-        Release the lock on Windows if we own it, called by C{unlock}.
+        Called by C{unlock} to unlock the file.  Depending on where this
+        method is executed it will:
+
+            * Close the existing handle if this instance created the
+              lock and remove the lock file.
+            * Open the lock file, read the pid, then remove the file if it
+              contains the same pid as the current process.
+            * Open the lock file, read the pid, raise ValueError if the pid
+              is for another process and the pid exists.
         """
-        # If this class instance has a handle for the file
         if self._hFile:
             CloseHandle(self._hFile)
             os.remove(self.name)
