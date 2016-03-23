@@ -281,7 +281,14 @@ class FilesystemLock(object):
 
     def _lockWindows(self):
         """
-        Called by C{lock} when running on Windows.
+        Called by C{lock} on Windows.  This method will:
+
+            * Return the current lock state if this class instance
+              created the lock.
+            * Write the lock file and return the lock state if the
+              lock file does not exist.
+            * If the lock file exists, open it and check to see if
+              the pid still exists.  If not, write the lock file.
         """
         if self._hFile:  # already locked by this instance
             return self.locked
