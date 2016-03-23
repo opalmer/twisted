@@ -496,34 +496,53 @@ class LockingTestsPosix(unittest.TestCase):
         self.assertFalse(lockfile.isLocked(lockf))
 
 
-class FunctionalLockingTests(unittest.TestCase):
-    def _terminateProcess(self, process):
-        try:
-            process.terminate()
-
-        # Process may already be dead.
-        except Exception:
-            pass
-
-    def _python(self, script):
-        process = subprocess.Popen([sys.executable, "-c", script])
-        self.addCleanup(self._terminateProcess, process)
+class FunctionalLockTests(unittest.TestCase):
+    """
+    Tests which ensure that FilesystemLock works as expected at a high
+    level.
+    """
+    def _python(self, code):
+        process = subprocess.Popen([sys.executable, "-c", code])
+        self.addCleanup(process.terminate)
+        while not process.pid:
+            continue
         return process
 
-    def test_lockProcessExists(self):
+    def testLock(self):
         """
-        L{FilesystemLock.lock} should return False if the process
-        the lock file declares (windows) or points to (non-windows)
-        exists.
+        Test that FilesystemLock.lock() behaves as expected if this
+        process creates the lock.
         """
         lockf = self.mktemp()
         lock = lockfile.FilesystemLock(lockf)
+        self.assertTrue(lock.lock())
+        self.assertTrue(lock.locked)
 
-        process = self._python("import time; time.sleep(3)")
+    def testLockCalledMultipleTimesBySameProcess(self):
+        """
+        Test that FilesystemLock.lock() returns True if it's called multiple
+        times by the same process.
+        """
+        lockf = self.mktemp()
+        lock = lockfile.FilesystemLock(lockf)
+        self.assertTrue(lock.lock())
+        self.assertTrue(lock.locked)
+        self.assertTrue(lock.lock())
+        self.assertTrue(lock.locked)
+        self.addCleanup(lock.unlock)
 
-        if platform.isWindows():
-            with open(lockf, "w") as file_:
-                file_.write(str(process.pid))
-        #
-
-        self.assertFalse(lock.lock())
+    def testLockCalledByMultipleProcesses(self):
+        """
+        Test that FilesystemLock.lock() returns False if another process
+        already owns the lock.
+        """
+        #T
+        lockf = self.mktemp()
+        code = "import time; from twisted.python.lockfile import " \
+               "FilesystemLock; " \
+               "assert FilesystemLock(%r).lock() is True;" \
+               "time.sleep(10)" % lockf
+        process = self._python(code)
+        lock = lockfile.FilesystemLock(lockf)
+        lock.lock()
+        self.fail("This passed, but it shouldn't have.")
