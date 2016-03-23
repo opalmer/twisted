@@ -367,7 +367,7 @@ class FilesystemLock(object):
         self.clean = None
         self.locked = None
 
-
+    # TODO: Add Windows documentation for @raise
     def lock(self):
         """
         Acquire this lock.
@@ -375,8 +375,8 @@ class FilesystemLock(object):
         @rtype: C{bool}
         @return: True if the lock is acquired, false otherwise.
 
-        @raise: Any exception os.symlink() may raise, other than
-        EEXIST.
+        @raise: On POSIX, any exception os.symlink() may raise, other than
+        EEXIST.  On Windows, ValueError...
         """
         if not _windows:
             return self._lockPosix()
