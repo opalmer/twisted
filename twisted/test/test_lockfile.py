@@ -9,14 +9,46 @@ Tests for L{twisted.python.lockfile}.
 from __future__ import absolute_import, division, print_function
 
 import errno
+import json
 import os
-import subprocess
 import sys
+from os.path import abspath, dirname, basename
+from textwrap import dedent
 
+from twisted.internet import reactor
+from twisted.internet.defer import Deferred, inlineCallbacks
+from twisted.internet.protocol import ProcessProtocol
 from twisted.trial import unittest
 from twisted.trial._synctest import SkipTest
 from twisted.python import lockfile
 from twisted.python.runtime import platform
+
+
+class PythonProcessProtocol(ProcessProtocol):
+    def __init__(self):
+        self.started = Deferred()
+        self.finished = Deferred()
+        self.success = False
+        self.pid = None
+        self.data = None
+
+    def connectionMade(self):
+        self.pid = self.transport.pid
+        self.started.callback(self.pid)
+
+    def processExited(self, reason):
+        self.success = reason.value.exitCode == 0
+        self.finished.callback(self.success)
+
+    def errReceived(self, data):
+        print("stderr: %s" % data)
+
+    def outReceived(self, data):
+        print("stdout: %s" % data)
+        try:
+            self.data = json.loads(data)
+        except ValueError:
+            pass
 
 
 class UtilTests(unittest.TestCase):
@@ -495,54 +527,75 @@ class LockingTestsPosix(unittest.TestCase):
         lock.unlock()
         self.assertFalse(lockfile.isLocked(lockf))
 
-
+# TODO: manually test current release of Twisted fo behavior on Windows and Linux
 class FunctionalLockTests(unittest.TestCase):
     """
-    Tests which ensure that FilesystemLock works as expected at a high
-    level.
+    These tests are designed to ensure that the behavior of FilesystemLock
+    is consistent across platforms and with prior versions of the class.
     """
-    def _python(self, code):
-        process = subprocess.Popen([sys.executable, "-c", code])
-        self.addCleanup(process.terminate)
-        while not process.pid:
-            continue
-        return process
-
     def testLock(self):
         """
-        Test that FilesystemLock.lock() behaves as expected if this
-        process creates the lock.
+        Process 1 calls FilesystemLock(file).lock(), returning True.
         """
-        lockf = self.mktemp()
-        lock = lockfile.FilesystemLock(lockf)
+        lock = lockfile.FilesystemLock(self.mktemp())
         self.assertTrue(lock.lock())
-        self.assertTrue(lock.locked)
+        self.assertFalse(lock.lock())
 
     def testLockCalledMultipleTimesBySameProcess(self):
         """
-        Test that FilesystemLock.lock() returns True if it's called multiple
-        times by the same process.
+        Only the first call to FilesystemLock(file).lock() will return True,
+        even if the calling process owns the lock.
         """
-        lockf = self.mktemp()
-        lock = lockfile.FilesystemLock(lockf)
-        self.assertTrue(lock.lock())
-        self.assertTrue(lock.locked)
-        self.assertTrue(lock.lock())
-        self.assertTrue(lock.locked)
-        self.addCleanup(lock.unlock)
-
-    def testLockCalledByMultipleProcesses(self):
-        """
-        Test that FilesystemLock.lock() returns False if another process
-        already owns the lock.
-        """
-        #T
-        lockf = self.mktemp()
-        code = "import time; from twisted.python.lockfile import " \
-               "FilesystemLock; " \
-               "assert FilesystemLock(%r).lock() is True;" \
-               "time.sleep(10)" % lockf
-        process = self._python(code)
-        lock = lockfile.FilesystemLock(lockf)
+        lock = lockfile.FilesystemLock(self.mktemp())
         lock.lock()
-        self.fail("This passed, but it shouldn't have.")
+        self.assertFalse(lock.lock())
+
+    @inlineCallbacks
+    def testLockCalledByExternalProcess(self):
+        """
+        Only the first process to call FilesystemLock(file).lock() should
+        be able to acquire the lock.
+        """
+        lockPath = abspath(self.mktemp())
+        lock = lockfile.FilesystemLock(lockPath)
+        self.assertTrue(lock.lock())
+
+        script = dedent("""
+        from __future__ import print_statement
+        import sys
+        import json
+
+        sys.path.insert(0, '%s')
+        from twisted.internet.lockfile import FilesystemLock
+
+        lock = FilesystemLock('%s')
+        print(json.dumps({"lock": lock.lock()})
+        """ % (
+            dirname(dirname(dirname(abspath(lockfile.__file__)))),
+            abspath(lockPath)
+        ))
+
+        scriptPath = self.mktemp()
+        with open(scriptPath, "w") as file_:
+            file_.write(script)
+
+        protocol = PythonProcessProtocol()
+        reactor.spawnProcess(
+            protocol, sys.executable, [basename(sys.executable), scriptPath]
+        )
+
+        # Wait for the process to complete
+        yield protocol.started
+        yield protocol.finished
+        self.assertEqual(
+            protocol.success, True,
+            "Subprocess has failed for an unknown reason")
+
+    def testAcquiresStaleLock(self):
+        """
+        A process launches and calls Only the first process to calls
+        FilesystemLock(file).lock() but dies and leaves the lock file
+        behind.  Another process should be able to acquire the lock again.
+        """
+
+    # TODO: manually test current release of Twisted fo behavior on Windows and Linux
