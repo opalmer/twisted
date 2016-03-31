@@ -140,7 +140,8 @@ class _ErrorFormatter(object):
             getwinerror = lambda errorcode: ffi.getwinerror(errorcode)[1]
         except (ImportError, CDefError):
             if platform.isWindows():
-                raise 
+                raise
+
             getwinerror = None
 
         try:
