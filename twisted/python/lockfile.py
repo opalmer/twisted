@@ -294,9 +294,6 @@ class FilesystemLock(object):
             * If the lock file exists, open it and check to see if
               the pid still exists.  If not, write the lock file.
         """
-        if self._hFile:  # already locked by this instance
-            return self.locked
-
         try:
             with open(self.name, "r") as file_:
                 pid = int(file_.read().rstrip("\x00"))
@@ -308,8 +305,8 @@ class FilesystemLock(object):
                 return self.locked
             raise
         else:
-            if not pid_exists(pid):
-                self.clean = False
+            if pid_exists(pid):
+                return False
 
             self._windowsWriteLockFile()
             self.locked = True
