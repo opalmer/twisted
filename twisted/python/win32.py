@@ -22,6 +22,7 @@ try:
 except ImportError:
     pass
 
+from cffi.api import CDefError
 from twisted.python.deprecate import deprecated
 from twisted.python.runtime import platform
 from twisted.python.versions import Version
@@ -137,7 +138,9 @@ class _ErrorFormatter(object):
             from pywincffi.core import dist
             ffi, _ = dist.load()
             getwinerror = lambda errorcode: ffi.getwinerror(errorcode)[1]
-        except ImportError:
+        except (ImportError, CDefError):
+            if platform.isWindows():
+                raise 
             getwinerror = None
 
         try:
