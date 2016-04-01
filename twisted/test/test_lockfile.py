@@ -30,7 +30,8 @@ class PythonProcessProtocol(ProcessProtocol):
         self.finished = Deferred()
         self.success = False
         self.pid = None
-        self.data = None
+        self.stderr = ""
+        self.stdout = ""
 
     def connectionMade(self):
         self.pid = self.transport.pid
@@ -41,10 +42,10 @@ class PythonProcessProtocol(ProcessProtocol):
         self.finished.callback(self.success)
 
     def errReceived(self, data):
-        print("stderr: %s" % data)
+        self.stderr += data
 
     def outReceived(self, data):
-        print("stdout: %s" % data)
+        self.stdout += data
         try:
             self.data = json.loads(data)
         except ValueError:
@@ -527,7 +528,7 @@ class LockingTestsPosix(unittest.TestCase):
         lock.unlock()
         self.assertFalse(lockfile.isLocked(lockf))
 
-# TODO: manually test current release of Twisted fo behavior on Windows and Linux
+
 class FunctionalLockTests(unittest.TestCase):
     """
     These tests are designed to ensure that the behavior of FilesystemLock
@@ -561,19 +562,20 @@ class FunctionalLockTests(unittest.TestCase):
         self.assertTrue(lock.lock())
 
         script = dedent("""
-        from __future__ import print_statement
+        from __future__ import print_function
         import sys
         import json
 
-        sys.path.insert(0, '%s')
-        from twisted.internet.lockfile import FilesystemLock
+        sys.path.insert(0, %r)
+        from twisted.python.lockfile import FilesystemLock
 
-        lock = FilesystemLock('%s')
-        print(json.dumps({"lock": lock.lock()})
-        """ % (
-            dirname(dirname(dirname(abspath(lockfile.__file__)))),
-            abspath(lockPath)
-        ))
+        lock = FilesystemLock(%r)
+        print(json.dumps({"lock": lock.lock()}))
+         """) % (
+            dirname(dirname(
+                dirname(abspath(lockfile.__file__)))).replace("\\", "/"),
+            abspath(lockPath).replace("\\", "/")
+        )
 
         scriptPath = self.mktemp()
         with open(scriptPath, "w") as file_:
@@ -584,12 +586,13 @@ class FunctionalLockTests(unittest.TestCase):
             protocol, sys.executable, [basename(sys.executable), scriptPath]
         )
 
-        # Wait for the process to complete
         yield protocol.started
         yield protocol.finished
         self.assertEqual(
             protocol.success, True,
             "Subprocess has failed for an unknown reason")
+
+        self.assertEqual(protocol.data, {"lock": False})
 
     def testAcquiresStaleLock(self):
         """
