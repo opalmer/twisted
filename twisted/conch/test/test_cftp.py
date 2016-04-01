@@ -11,10 +11,17 @@ import time, sys, os, operator, getpass, struct
 from StringIO import StringIO
 
 from zope.interface import implementer
-from twisted.conch.test.test_ssh import Crypto, pyasn1
+try:
+    import pyasn1
+except ImportError:
+    pyasn1 = None
+try:
+    import cryptography
+except ImportError:
+    cryptography = None
 
 _reason = None
-if Crypto and pyasn1:
+if cryptography and pyasn1:
     try:
         from twisted.conch import unix
         from twisted.conch.scripts import cftp
@@ -31,7 +38,7 @@ from twisted.python.fakepwd import UserDatabase
 from twisted.trial.unittest import TestCase
 from twisted.cred import portal
 from twisted.internet import reactor, protocol, interfaces, defer, error
-from twisted.internet.utils import getProcessOutputAndValue
+from twisted.internet.utils import getProcessOutputAndValue, getProcessValue
 from twisted.python import log
 from twisted.conch import ls
 from twisted.conch.interfaces import ISFTPFile
@@ -1378,7 +1385,8 @@ class OurServerSftpClientTests(CFTPClientTestBase):
         L{filetransfer.FILEXFER_ATTR_EXTENDED} has the correct value.
         """
         fn = self.mktemp()
-        open(fn, 'w').write("ls .\nexit")
+        with open(fn, 'w') as f:
+            f.write("ls .\nexit")
         port = self.server.getHost().port
 
         oldGetAttr = FileTransferForTestAvatar._getAttrs
@@ -1388,25 +1396,44 @@ class OurServerSftpClientTests(CFTPClientTestBase):
             return attrs
 
         self.patch(FileTransferForTestAvatar, "_getAttrs", _getAttrs)
-
         self.server.factory.expectedLoseConnection = True
-        cmds = ('-o', 'IdentityFile=dsa_test',
-                '-o', 'UserKnownHostsFile=kh_test',
-                '-o', 'HostKeyAlgorithms=ssh-rsa',
-                '-o', 'Port=%i' % (port,), '-b', fn, 'testuser@127.0.0.1')
-        d = getProcessOutputAndValue("sftp", cmds)
+
+        # PubkeyAcceptedKeyTypes does not exist prior to OpenSSH 7.0 so we
+        # first need to check if we can set it. If we can, -V will just print
+        # the version without doing anything else; if we can't, we will get a
+        # configuration error.
+        d = getProcessValue(
+            'ssh', ('-o', 'PubkeyAcceptedKeyTypes=ssh-dss', '-V'))
+        def hasPAKT(status):
+            if status == 0:
+                args = ('-o', 'PubkeyAcceptedKeyTypes=ssh-dss')
+            else:
+                args = ()
+            # Pass -F /dev/null to avoid the user's configuration file from
+            # being loaded, as it may contain settings that cause our tests to
+            # fail or hang.
+            args += ('-F', '/dev/null',
+                     '-o', 'IdentityFile=dsa_test',
+                     '-o', 'UserKnownHostsFile=kh_test',
+                     '-o', 'HostKeyAlgorithms=ssh-rsa',
+                     '-o', 'Port=%i' % (port,), '-b', fn, 'testuser@127.0.0.1')
+            return args
+
         def check(result):
             self.assertEqual(result[2], 0)
             for i in ['testDirectory', 'testRemoveFile',
                       'testRenameFile', 'testfile1']:
                 self.assertIn(i, result[0])
+        d.addCallback(hasPAKT)
+        d.addCallback(lambda args: getProcessOutputAndValue('sftp', args))
         return d.addCallback(check)
 
 
 
-if unix is None or Crypto is None or pyasn1 is None or interfaces.IReactorProcess(reactor, None) is None:
+if None in (unix, cryptography, pyasn1,
+            interfaces.IReactorProcess(reactor, None)):
     if _reason is None:
-        _reason = "don't run w/o spawnProcess or PyCrypto or pyasn1"
+        _reason = "don't run w/o spawnProcess or cryptography or pyasn1"
     OurServerCmdLineClientTests.skip = _reason
     OurServerBatchFileTests.skip = _reason
     OurServerSftpClientTests.skip = _reason

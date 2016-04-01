@@ -2770,7 +2770,7 @@ class DummyResponse(object):
         is used by L{DummyResponse.protocol} to make a connection.
     """
 
-    code = b"200"
+    code = 200
     phrase = b"OK"
 
     def __init__(self, headers=None, transportFactory=AbortableStringTransport):
@@ -2888,6 +2888,7 @@ class ReadBodyTests(TestCase):
         warning, but no exception when cancelling.
         """
         response = DummyResponse(transportFactory=StringTransport)
+        response.transport.abortConnection = None
         d = self.assertWarns(
             DeprecationWarning,
             'Using readBody with a transport that does not have an '
