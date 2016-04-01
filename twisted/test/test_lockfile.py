@@ -29,9 +29,7 @@ class PythonProcessProtocol(ProcessProtocol):
         self.started = Deferred()
         self.finished = Deferred()
         self.success = False
-        self.pid = None
-        self.stderr = ""
-        self.stdout = ""
+        self.locked = False
 
     def connectionMade(self):
         self.pid = self.transport.pid
@@ -41,13 +39,9 @@ class PythonProcessProtocol(ProcessProtocol):
         self.success = reason.value.exitCode == 0
         self.finished.callback(self.success)
 
-    def errReceived(self, data):
-        self.stderr += data
-
     def outReceived(self, data):
-        self.stdout += data
         try:
-            self.data = json.loads(data)
+            self.locked = json.loads(data)["lock"]
         except ValueError:
             pass
 
@@ -534,6 +528,32 @@ class FunctionalLockTests(unittest.TestCase):
     These tests are designed to ensure that the behavior of FilesystemLock
     is consistent across platforms and with prior versions of the class.
     """
+    def _writePythonScripts(self, lockPath=None):
+        if lockPath is None:
+            lockPath = abspath(self.mktemp())
+
+        script = dedent("""
+        from __future__ import print_function
+        import sys
+        import json
+
+        sys.path.insert(0, %r)
+        from twisted.python.lockfile import FilesystemLock
+
+        lock = FilesystemLock(%r)
+        print(json.dumps({"lock": lock.lock()}))
+         """) % (
+            dirname(dirname(
+                dirname(abspath(lockfile.__file__)))).replace("\\", "/"),
+            abspath(lockPath).replace("\\", "/")
+        )
+
+        scriptPath = self.mktemp()
+        with open(scriptPath, "w") as file_:
+            file_.write(script)
+
+        return scriptPath, lockPath
+
     def testLock(self):
         """
         Process 1 calls FilesystemLock(file).lock(), returning True.
@@ -561,25 +581,7 @@ class FunctionalLockTests(unittest.TestCase):
         lock = lockfile.FilesystemLock(lockPath)
         self.assertTrue(lock.lock())
 
-        script = dedent("""
-        from __future__ import print_function
-        import sys
-        import json
-
-        sys.path.insert(0, %r)
-        from twisted.python.lockfile import FilesystemLock
-
-        lock = FilesystemLock(%r)
-        print(json.dumps({"lock": lock.lock()}))
-         """) % (
-            dirname(dirname(
-                dirname(abspath(lockfile.__file__)))).replace("\\", "/"),
-            abspath(lockPath).replace("\\", "/")
-        )
-
-        scriptPath = self.mktemp()
-        with open(scriptPath, "w") as file_:
-            file_.write(script)
+        scriptPath, _ = self._writePythonScripts(lockPath=lockPath)
 
         protocol = PythonProcessProtocol()
         reactor.spawnProcess(
@@ -592,13 +594,42 @@ class FunctionalLockTests(unittest.TestCase):
             protocol.success, True,
             "Subprocess has failed for an unknown reason")
 
-        self.assertEqual(protocol.data, {"lock": False})
+        self.assertFalse(protocol.locked)
 
+    @inlineCallbacks
     def testAcquiresStaleLock(self):
         """
         A process launches and calls Only the first process to calls
         FilesystemLock(file).lock() but dies and leaves the lock file
         behind.  Another process should be able to acquire the lock again.
         """
+        # First process acquires lock
+        scriptPath, lockPath = self._writePythonScripts()
+        protocol = PythonProcessProtocol()
+        reactor.spawnProcess(
+            protocol, sys.executable, [basename(sys.executable), scriptPath]
+        )
+
+        yield protocol.started
+        yield protocol.finished
+        self.assertEqual(
+            protocol.success, True,
+            "Subprocess has failed for an unknown reason")
+
+        self.assertTrue(protocol.locked)
+
+        # Second process acquires lock
+        protocol = PythonProcessProtocol()
+        reactor.spawnProcess(
+            protocol, sys.executable, [basename(sys.executable), scriptPath]
+        )
+
+        yield protocol.started
+        yield protocol.finished
+        self.assertEqual(
+            protocol.success, True,
+            "Subprocess has failed for an unknown reason")
+
+        self.assertTrue(protocol.locked)
 
     # TODO: manually test current release of Twisted fo behavior on Windows and Linux
